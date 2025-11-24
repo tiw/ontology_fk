@@ -4,21 +4,22 @@
 提供多层次、自适应的索引管理功能，显著提升查询性能。
 """
 
-from typing import Dict, List, Any, Optional, Set, Tuple
-from dataclasses import dataclass
-from collections import defaultdict
-import time
 import threading
+import time
 from abc import ABC, abstractmethod
+from collections import defaultdict
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Set, Tuple
 
-from ..core import ObjectInstance, ObjectType, Link
+from ..core import Link, ObjectInstance, ObjectType
 
 
 @dataclass
 class QueryStats:
     """查询统计信息"""
+
     query_hash: str
-    query: 'Query'
+    query: "Query"
     frequency: int = 0
     total_duration: float = 0.0
     avg_duration: float = 0.0
@@ -34,9 +35,10 @@ class QueryStats:
 @dataclass
 class IndexDefinition:
     """索引定义"""
+
     object_type: str
     properties: List[str]
-    index_type: str = 'btree'  # btree, hash, composite
+    index_type: str = "btree"  # btree, hash, composite
     unique: bool = False
     case_sensitive: bool = True
 
@@ -176,7 +178,9 @@ class CompositeIndex(BaseIndex):
 
         # 检查是否为前缀条件
         filter_props = list(filters.keys())
-        if not all(prop in self.properties[:len(filter_props)] for prop in filter_props):
+        if not all(
+            prop in self.properties[: len(filter_props)] for prop in filter_props
+        ):
             return set()
 
         prefix_key = tuple(filters[prop] for prop in filter_props)
@@ -184,7 +188,7 @@ class CompositeIndex(BaseIndex):
 
         with self._lock:
             for key, pks in self._index.items():
-                if key[:len(prefix_key)] == prefix_key:
+                if key[: len(prefix_key)] == prefix_key:
                     result.update(pks)
 
         return result
@@ -209,7 +213,9 @@ class AdvancedIndexManager:
         self.composite_index: Dict[str, CompositeIndex] = {}
 
         # 链接索引
-        self.link_index: Dict[str, Dict[str, Dict[Any, Set[Any]]]] = defaultdict(lambda: defaultdict(dict))
+        self.link_index: Dict[str, Dict[str, Dict[Any, Set[Any]]]] = defaultdict(
+            lambda: defaultdict(dict)
+        )
 
         # 索引注册表
         self.index_registry: Dict[str, IndexDefinition] = {}
@@ -227,8 +233,9 @@ class AdvancedIndexManager:
         with self._lock:
             self.primary_index[object_type.api_name] = {}
 
-    def create_property_index(self, object_type: str, property_name: str,
-                            index_type: str = 'btree') -> str:
+    def create_property_index(
+        self, object_type: str, property_name: str, index_type: str = "btree"
+    ) -> str:
         """创建属性索引"""
         index_key = f"{object_type}.{property_name}"
 
@@ -236,7 +243,7 @@ class AdvancedIndexManager:
             if index_key in self.property_index:
                 return index_key
 
-            if index_type == 'btree':
+            if index_type == "btree":
                 index = BTreeIndex(object_type, property_name)
             else:
                 raise ValueError(f"Unsupported index type: {index_type}")
@@ -249,9 +256,9 @@ class AdvancedIndexManager:
 
             # 初始化统计信息
             self.index_stats[index_key] = {
-                'created_at': time.time(),
-                'size': 0,
-                'usage_count': 0
+                "created_at": time.time(),
+                "size": 0,
+                "usage_count": 0,
             }
 
         return index_key
@@ -272,14 +279,14 @@ class AdvancedIndexManager:
             self.composite_index[index_key] = index
 
             # 注册索引定义
-            index_def = IndexDefinition(object_type, properties, 'composite')
+            index_def = IndexDefinition(object_type, properties, "composite")
             self.index_registry[index_key] = index_def
 
             # 初始化统计信息
             self.index_stats[index_key] = {
-                'created_at': time.time(),
-                'size': 0,
-                'usage_count': 0
+                "created_at": time.time(),
+                "size": 0,
+                "usage_count": 0,
             }
 
         return index_key
@@ -297,13 +304,13 @@ class AdvancedIndexManager:
         for index_key, index in self.property_index.items():
             if obj_type in index_key:
                 index.add(obj)
-                self._update_index_stats(index_key, 'add')
+                self._update_index_stats(index_key, "add")
 
         # 添加到复合索引
         for index_key, index in self.composite_index.items():
             if obj_type in index_key:
                 index.add(obj)
-                self._update_index_stats(index_key, 'add')
+                self._update_index_stats(index_key, "add")
 
     def remove_object(self, obj: ObjectInstance):
         """从索引中移除对象"""
@@ -318,29 +325,39 @@ class AdvancedIndexManager:
         for index_key, index in self.property_index.items():
             if obj_type in index_key:
                 index.remove(obj)
-                self._update_index_stats(index_key, 'remove')
+                self._update_index_stats(index_key, "remove")
 
         # 从复合索引移除
         for index_key, index in self.composite_index.items():
             if obj_type in index_key:
                 index.remove(obj)
-                self._update_index_stats(index_key, 'remove')
+                self._update_index_stats(index_key, "remove")
 
     def index_link(self, link: Link):
         """索引链接"""
         with self._lock:
             link_type = link.link_type_api_name
-            self.link_index[link_type]['source'][link.source_primary_key].add(link.target_primary_key)
-            self.link_index[link_type]['target'][link.target_primary_key].add(link.source_primary_key)
+            self.link_index[link_type]["source"][link.source_primary_key].add(
+                link.target_primary_key
+            )
+            self.link_index[link_type]["target"][link.target_primary_key].add(
+                link.source_primary_key
+            )
 
     def remove_link(self, link: Link):
         """从索引中移除链接"""
         with self._lock:
             link_type = link.link_type_api_name
-            self.link_index[link_type]['source'][link.source_primary_key].discard(link.target_primary_key)
-            self.link_index[link_type]['target'][link.target_primary_key].discard(link.source_primary_key)
+            self.link_index[link_type]["source"][link.source_primary_key].discard(
+                link.target_primary_key
+            )
+            self.link_index[link_type]["target"][link.target_primary_key].discard(
+                link.source_primary_key
+            )
 
-    def find_objects_by_primary_key(self, object_type: str, primary_keys: List[Any]) -> List[ObjectInstance]:
+    def find_objects_by_primary_key(
+        self, object_type: str, primary_keys: List[Any]
+    ) -> List[ObjectInstance]:
         """根据主键批量查找对象"""
         with self._lock:
             obj_store = self.primary_index.get(object_type, {})
@@ -357,7 +374,7 @@ class AdvancedIndexManager:
             # 使用索引查询
             if index_key in self.property_index:
                 # 单属性索引
-                prop_name = index_key.split('.')[1]
+                prop_name = index_key.split(".")[1]
                 if prop_name in filters:
                     result = self.property_index[index_key].query(filters[prop_name])
                 else:
@@ -382,7 +399,9 @@ class AdvancedIndexManager:
 
         return result
 
-    def _find_best_index(self, object_type: str, filters: Dict[str, Any]) -> Optional[str]:
+    def _find_best_index(
+        self, object_type: str, filters: Dict[str, Any]
+    ) -> Optional[str]:
         """选择最佳索引"""
         filter_props = set(filters.keys())
 
@@ -408,8 +427,9 @@ class AdvancedIndexManager:
 
         return None
 
-    def get_related_objects(self, link_type: str, source_pks: List[Any],
-                          direction: str = 'forward') -> Dict[Any, Set[Any]]:
+    def get_related_objects(
+        self, link_type: str, source_pks: List[Any], direction: str = "forward"
+    ) -> Dict[Any, Set[Any]]:
         """获取相关对象"""
         with self._lock:
             if link_type not in self.link_index:
@@ -418,14 +438,14 @@ class AdvancedIndexManager:
             link_index = self.link_index[link_type]
             result = {}
 
-            if direction == 'forward':
+            if direction == "forward":
                 # 源 -> 目标
                 for pk in source_pks:
-                    result[pk] = link_index['source'].get(pk, set())
+                    result[pk] = link_index["source"].get(pk, set())
             else:
                 # 目标 -> 源
                 for pk in source_pks:
-                    result[pk] = link_index['target'].get(pk, set())
+                    result[pk] = link_index["target"].get(pk, set())
 
             return result
 
@@ -438,17 +458,17 @@ class AdvancedIndexManager:
             for index_key, index in self.property_index.items():
                 stats[index_key] = {
                     **self.index_stats[index_key],
-                    'type': 'property',
-                    'size': index.size()
+                    "type": "property",
+                    "size": index.size(),
                 }
 
             # 复合索引统计
             for index_key, index in self.composite_index.items():
                 stats[index_key] = {
                     **self.index_stats[index_key],
-                    'type': 'composite',
-                    'properties': index.properties,
-                    'size': index.size()
+                    "type": "composite",
+                    "properties": index.properties,
+                    "size": index.size(),
                 }
 
             return stats
@@ -456,19 +476,25 @@ class AdvancedIndexManager:
     def _update_index_stats(self, index_key: str, operation: str):
         """更新索引统计信息"""
         if index_key in self.index_stats:
-            if operation == 'add':
-                self.index_stats[index_key]['size'] += 1
-            elif operation == 'remove':
-                self.index_stats[index_key]['size'] = max(0, self.index_stats[index_key]['size'] - 1)
+            if operation == "add":
+                self.index_stats[index_key]["size"] += 1
+            elif operation == "remove":
+                self.index_stats[index_key]["size"] = max(
+                    0, self.index_stats[index_key]["size"] - 1
+                )
 
-    def _update_query_stats(self, object_type: str, filters: Dict[str, Any], duration: float):
+    def _update_query_stats(
+        self, object_type: str, filters: Dict[str, Any], duration: float
+    ):
         """更新查询统计信息"""
         query_hash = hash((object_type, tuple(sorted(filters.items()))))
 
         if query_hash not in self.query_stats:
             self.query_stats[query_hash] = QueryStats(
                 query_hash=query_hash,
-                query=type('Query', (), {'object_type': object_type, 'filters': filters})()
+                query=type(
+                    "Query", (), {"object_type": object_type, "filters": filters}
+                )(),
             )
 
         self.query_stats[query_hash].update(duration)
@@ -478,10 +504,10 @@ class AdvancedIndexManager:
         with self._lock:
             return {
                 qid: {
-                    'frequency': stats.frequency,
-                    'avg_duration': stats.avg_duration,
-                    'total_duration': stats.total_duration,
-                    'last_executed': stats.last_executed
+                    "frequency": stats.frequency,
+                    "avg_duration": stats.avg_duration,
+                    "total_duration": stats.total_duration,
+                    "last_executed": stats.last_executed,
                 }
                 for qid, stats in self.query_stats.items()
             }
@@ -500,7 +526,9 @@ class HierarchicalIndex:
         self.cold_index = AdvancedIndexManager()
 
         # 访问跟踪
-        self.access_tracker: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        self.access_tracker: Dict[str, Dict[str, int]] = defaultdict(
+            lambda: defaultdict(int)
+        )
 
         self._lock = threading.RLock()
 
@@ -561,9 +589,15 @@ class HierarchicalIndex:
 
         # 获取实际对象
         result = []
-        result.extend(self.hot_index.find_objects_by_primary_key(object_type, list(hot_pks)))
-        result.extend(self.warm_index.find_objects_by_primary_key(object_type, list(warm_pks)))
-        result.extend(self.cold_index.find_objects_by_primary_key(object_type, list(cold_pks)))
+        result.extend(
+            self.hot_index.find_objects_by_primary_key(object_type, list(hot_pks))
+        )
+        result.extend(
+            self.warm_index.find_objects_by_primary_key(object_type, list(warm_pks))
+        )
+        result.extend(
+            self.cold_index.find_objects_by_primary_key(object_type, list(cold_pks))
+        )
 
         return [obj for obj in result if obj is not None]
 
@@ -583,7 +617,9 @@ class HierarchicalIndex:
             self.warm_index.remove_object(obj[0])
         else:
             # 尝试从冷数据层获取
-            obj = self.cold_index.find_objects_by_primary_key(object_type, [primary_key])
+            obj = self.cold_index.find_objects_by_primary_key(
+                object_type, [primary_key]
+            )
             if obj:
                 self.hot_index.index_object(obj[0])
                 self.cold_index.remove_object(obj[0])
@@ -611,7 +647,7 @@ class AdaptiveIndexManager:
 
         # 分析高频慢查询
         for query_id, stats in query_stats.items():
-            if stats['frequency'] > 10 and stats['avg_duration'] > 50:
+            if stats["frequency"] > 10 and stats["avg_duration"] > 50:
                 # 这里应该从查询中提取过滤条件
                 # 简化实现，假设我们有一个方法来获取查询详情
                 suggested_indexes = self._suggest_indexes_from_query(query_id)
@@ -626,7 +662,7 @@ class AdaptiveIndexManager:
         # 简化实现
         return [
             IndexDefinition("TestObject", ["property1"]),
-            IndexDefinition("TestObject", ["property1", "property2"], "composite")
+            IndexDefinition("TestObject", ["property1", "property2"], "composite"),
         ]
 
     def _should_create_index(self, index_def: IndexDefinition) -> bool:
@@ -657,13 +693,11 @@ class AdaptiveIndexManager:
             try:
                 if len(index_def.properties) == 1:
                     index_key = self.index_manager.create_property_index(
-                        index_def.object_type,
-                        index_def.properties[0]
+                        index_def.object_type, index_def.properties[0]
                     )
                 else:
                     index_key = self.index_manager.create_composite_index(
-                        index_def.object_type,
-                        index_def.properties
+                        index_def.object_type, index_def.properties
                     )
 
                 created_indexes.append(index_key)

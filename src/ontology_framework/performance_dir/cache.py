@@ -4,21 +4,22 @@
 提供智能缓存管理，支持多级缓存、动态TTL、缓存统计等功能。
 """
 
-import time
-import threading
-import json
 import hashlib
-from typing import Any, Optional, Dict, List, Set, Callable
-from dataclasses import dataclass, field
-from collections import OrderedDict, defaultdict
-from abc import ABC, abstractmethod
-from queue import Queue, Empty
+import json
 import pickle
+import threading
+import time
 import weakref
+from abc import ABC, abstractmethod
+from collections import OrderedDict, defaultdict
+from dataclasses import dataclass, field
+from queue import Empty, Queue
+from typing import Any, Callable, Dict, List, Optional, Set
 
 # Redis支持（可选）
 try:
     import redis
+
     REDIS_AVAILABLE = True
 except ImportError:
     REDIS_AVAILABLE = False
@@ -27,6 +28,7 @@ except ImportError:
 @dataclass
 class CacheEntry:
     """缓存条目"""
+
     key: str
     value: Any
     created_at: float
@@ -50,6 +52,7 @@ class CacheEntry:
 @dataclass
 class CacheStats:
     """缓存统计信息"""
+
     hits: int = 0
     misses: int = 0
     sets: int = 0
@@ -182,7 +185,7 @@ class LRUCache(BaseCache):
                 created_at=time.time(),
                 last_accessed=time.time(),
                 ttl=ttl or self.default_ttl,
-                size=value_size
+                size=value_size,
             )
 
             self._cache[key] = entry
@@ -221,7 +224,7 @@ class LRUCache(BaseCache):
                 misses=self._stats.misses,
                 sets=self._stats.sets,
                 deletes=self._stats.deletes,
-                evictions=self._stats.evictions
+                evictions=self._stats.evictions,
             )
 
     def get_memory_usage(self) -> int:
@@ -231,8 +234,10 @@ class LRUCache(BaseCache):
 
     def _ensure_capacity(self, new_item_size: int):
         """确保有足够容量"""
-        while (len(self._cache) >= self.maxsize or
-               self._total_memory_usage + new_item_size > self.maxsize * 1024):
+        while (
+            len(self._cache) >= self.maxsize
+            or self._total_memory_usage + new_item_size > self.maxsize * 1024
+        ):
 
             # 移除最旧的条目
             if self._cache:
@@ -246,8 +251,7 @@ class LRUCache(BaseCache):
         """清理过期条目"""
         with self._lock:
             expired_keys = [
-                key for key, entry in self._cache.items()
-                if entry.is_expired()
+                key for key, entry in self._cache.items() if entry.is_expired()
             ]
 
             for key in expired_keys:
@@ -259,16 +263,27 @@ class LRUCache(BaseCache):
 class RedisCache(BaseCache):
     """Redis缓存实现"""
 
-    def __init__(self, host: str = 'localhost', port: int = 6379,
-                 db: int = 0, password: Optional[str] = None,
-                 ttl: Optional[float] = None, prefix: str = 'ontology:'):
+    def __init__(
+        self,
+        host: str = "localhost",
+        port: int = 6379,
+        db: int = 0,
+        password: Optional[str] = None,
+        ttl: Optional[float] = None,
+        prefix: str = "ontology:",
+    ):
 
         if not REDIS_AVAILABLE:
-            raise ImportError("Redis is not available. Install redis-py to use RedisCache.")
+            raise ImportError(
+                "Redis is not available. Install redis-py to use RedisCache."
+            )
 
         self.redis_client = redis.Redis(
-            host=host, port=port, db=db, password=password,
-            decode_responses=False  # 保持二进制数据
+            host=host,
+            port=port,
+            db=db,
+            password=password,
+            decode_responses=False,  # 保持二进制数据
         )
         self.default_ttl = ttl
         self.prefix = prefix
@@ -373,15 +388,19 @@ class RedisCache(BaseCache):
                 misses=self._stats.misses,
                 sets=self._stats.sets,
                 deletes=self._stats.deletes,
-                evictions=self._stats.evictions
+                evictions=self._stats.evictions,
             )
 
 
 class MultiLevelCache:
     """多级缓存系统"""
 
-    def __init__(self, l1_size: int = 100, l2_size: int = 1000,
-                 l3_redis: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        l1_size: int = 100,
+        l2_size: int = 1000,
+        l3_redis: Optional[Dict[str, Any]] = None,
+    ):
         # L1: 内存缓存 (最热数据)
         self.l1_cache = LRUCache(maxsize=l1_size, ttl=300)  # 5分钟
 
@@ -397,9 +416,9 @@ class MultiLevelCache:
         # 缓存统计
         self.global_stats = CacheStats()
         self.level_stats = {
-            'L1': CacheStats(),
-            'L2': CacheStats(),
-            'L3': CacheStats() if self.l3_cache else None
+            "L1": CacheStats(),
+            "L2": CacheStats(),
+            "L3": CacheStats() if self.l3_cache else None,
         }
 
         # 访问模式分析
@@ -416,14 +435,14 @@ class MultiLevelCache:
             # L1 缓存
             value = self.l1_cache.get(key)
             if value is not None:
-                self.level_stats['L1'].record_hit()
+                self.level_stats["L1"].record_hit()
                 self.global_stats.record_hit()
                 return value
 
             # L2 缓存
             value = self.l2_cache.get(key)
             if value is not None:
-                self.level_stats['L2'].record_hit()
+                self.level_stats["L2"].record_hit()
                 self.global_stats.record_hit()
                 # 提升到 L1
                 self.l1_cache.set(key, value)
@@ -433,7 +452,7 @@ class MultiLevelCache:
             if self.l3_cache:
                 value = self.l3_cache.get(key)
                 if value is not None:
-                    self.level_stats['L3'].record_hit()
+                    self.level_stats["L3"].record_hit()
                     self.global_stats.record_hit()
                     # 提升到 L2
                     self.l2_cache.set(key, value)
@@ -443,24 +462,24 @@ class MultiLevelCache:
             self.global_stats.record_miss()
             return None
 
-    def set(self, key: str, value: Any, level: str = 'L2', ttl: Optional[float] = None):
+    def set(self, key: str, value: Any, level: str = "L2", ttl: Optional[float] = None):
         """分级缓存设置"""
         with self._lock:
             self.global_stats.record_set()
 
-            if level == 'L1':
+            if level == "L1":
                 self.l1_cache.set(key, value, ttl)
-                self.level_stats['L1'].record_set()
-            elif level == 'L2':
+                self.level_stats["L1"].record_set()
+            elif level == "L2":
                 self.l2_cache.set(key, value, ttl)
-                self.level_stats['L2'].record_set()
-            elif level == 'L3' and self.l3_cache:
+                self.level_stats["L2"].record_set()
+            elif level == "L3" and self.l3_cache:
                 self.l3_cache.set(key, value, ttl)
-                self.level_stats['L3'].record_set()
+                self.level_stats["L3"].record_set()
             else:
                 # 默认存储在L2
                 self.l2_cache.set(key, value, ttl)
-                self.level_stats['L2'].record_set()
+                self.level_stats["L2"].record_set()
 
     def delete(self, key: str) -> bool:
         """从所有层级删除"""
@@ -492,35 +511,35 @@ class MultiLevelCache:
         """获取综合统计信息"""
         with self._lock:
             stats = {
-                'global': {
-                    'hits': self.global_stats.hits,
-                    'misses': self.global_stats.misses,
-                    'hit_rate': self.global_stats.hit_rate,
-                    'sets': self.global_stats.sets,
-                    'deletes': self.global_stats.deletes
+                "global": {
+                    "hits": self.global_stats.hits,
+                    "misses": self.global_stats.misses,
+                    "hit_rate": self.global_stats.hit_rate,
+                    "sets": self.global_stats.sets,
+                    "deletes": self.global_stats.deletes,
                 },
-                'levels': {}
+                "levels": {},
             }
 
-            for level, cache in [('L1', self.l1_cache), ('L2', self.l2_cache)]:
+            for level, cache in [("L1", self.l1_cache), ("L2", self.l2_cache)]:
                 level_stats = self.level_stats[level]
                 cache_stats = cache.get_stats()
 
-                stats['levels'][level] = {
-                    'size': cache.size(),
-                    'memory_bytes': cache.get_memory_usage(),
-                    'hit_rate': level_stats.hit_rate,
-                    'hits': level_stats.hits,
-                    'misses': level_stats.misses
+                stats["levels"][level] = {
+                    "size": cache.size(),
+                    "memory_bytes": cache.get_memory_usage(),
+                    "hit_rate": level_stats.hit_rate,
+                    "hits": level_stats.hits,
+                    "misses": level_stats.misses,
                 }
 
-            if self.l3_cache and self.level_stats['L3']:
-                level_stats = self.level_stats['L3']
-                stats['levels']['L3'] = {
-                    'size': self.l3_cache.size(),
-                    'hit_rate': level_stats.hit_rate,
-                    'hits': level_stats.hits,
-                    'misses': level_stats.misses
+            if self.l3_cache and self.level_stats["L3"]:
+                level_stats = self.level_stats["L3"]
+                stats["levels"]["L3"] = {
+                    "size": self.l3_cache.size(),
+                    "hit_rate": level_stats.hit_rate,
+                    "hits": level_stats.hits,
+                    "misses": level_stats.misses,
                 }
 
             return stats
@@ -551,8 +570,7 @@ class MultiLevelCache:
             cutoff_time = current_time - window_seconds
 
             recent_accesses = [
-                ts for ts in self.access_patterns[key]
-                if ts >= cutoff_time
+                ts for ts in self.access_patterns[key] if ts >= cutoff_time
             ]
 
             return len(recent_accesses) / (window_seconds / 60)  # 每分钟访问次数
@@ -616,18 +634,18 @@ class IntelligentCache:
     def _is_real_time_data(self, query: Any) -> bool:
         """判断是否为实时数据"""
         # 简化实现，可以根据查询的具体特征判断
-        return hasattr(query, 'real_time') and query.real_time
+        return hasattr(query, "real_time") and query.real_time
 
     def _determine_cache_level(self, key: str, query: Any) -> str:
         """确定缓存层级"""
         access_freq = self.cache.get_access_frequency(key)
 
         if access_freq > 10:  # 高频访问
-            return 'L1'
+            return "L1"
         elif access_freq > 1:  # 中频访问
-            return 'L2'
+            return "L2"
         else:
-            return 'L3'
+            return "L3"
 
 
 class QueryPatternAnalyzer:
@@ -636,7 +654,7 @@ class QueryPatternAnalyzer:
     def __init__(self):
         self.patterns: Dict[str, QueryPattern] = {}
 
-    def analyze(self, query: Any) -> 'QueryPattern':
+    def analyze(self, query: Any) -> "QueryPattern":
         """分析查询模式"""
         query_hash = self._hash_query(query)
 
@@ -662,6 +680,7 @@ class QueryPatternAnalyzer:
 @dataclass
 class QueryPattern:
     """查询模式"""
+
     query: Any
     frequency: int = 0
     total_duration: float = 0.0
@@ -688,15 +707,14 @@ class AdaptiveCachePolicy:
         stats = cache.get_comprehensive_stats()
 
         # 检查L1命中率
-        l1_hit_rate = stats['levels'].get('L1', {}).get('hit_rate', 0)
+        l1_hit_rate = stats["levels"].get("L1", {}).get("hit_rate", 0)
         if l1_hit_rate < self.hit_rate_threshold:
             # 增加L1缓存大小
             self._resize_cache_level(cache.l1_cache, int(cache.l1_cache.maxsize * 1.2))
 
         # 检查内存使用
         total_memory = sum(
-            level.get('memory_bytes', 0)
-            for level in stats['levels'].values()
+            level.get("memory_bytes", 0) for level in stats["levels"].values()
         )
 
         # 这里可以添加更复杂的内存管理逻辑

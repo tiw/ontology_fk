@@ -5,7 +5,9 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "fastmcp>=2.13.0",
     "pytest>=9.0.1",
+    "structlog>=25.5.0",
 ]
 
 [project.optional-dependencies]
@@ -183,3 +185,12 @@ exclude = [
     ".tox",
 ]
 max-complexity = 10
+
+[dependency-groups]
+dev = [
+    "pytest-benchmark>=5.2.3",
+]
+quality = [
+    "black>=25.11.0",
+    "isort>=7.0.0",
+]

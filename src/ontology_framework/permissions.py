@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
-from typing import List, Optional
 from enum import Enum
+from typing import List, Optional
+
 
 class PermissionType(Enum):
     VIEW = "view"
@@ -8,11 +9,13 @@ class PermissionType(Enum):
     DELETE = "delete"
     OWNER = "owner"
 
+
 @dataclass
 class Principal:
     id: str
     type: str = "USER"  # USER or GROUP
     attributes: List[str] = field(default_factory=list)
+
 
 @dataclass
 class AccessControlList:

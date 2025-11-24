@@ -4,31 +4,38 @@
 提供全面的性能测试和回归检测功能。
 """
 
-import time
 import asyncio
+import concurrent.futures
+import csv
+import json
 import random
 import statistics
 import threading
-import concurrent.futures
-from typing import Dict, List, Any, Optional, Callable, Tuple
-from dataclasses import dataclass, field
+import time
 from contextlib import contextmanager
-import json
-import csv
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from src.ontology_framework.core import (
-    Ontology, ObjectType, ObjectInstance, PropertyType,
-    LinkType, Link
+    Link,
+    LinkType,
+    ObjectInstance,
+    ObjectType,
+    Ontology,
+    PropertyType,
 )
 from src.ontology_framework.performance import (
-    AdvancedIndexManager, MultiLevelCache, PerformanceMonitor
+    AdvancedIndexManager,
+    MultiLevelCache,
+    PerformanceMonitor,
 )
 
 
 @dataclass
 class BenchmarkResult:
     """基准测试结果"""
+
     test_name: str
     data_size: int
     execution_time: float  # ms
@@ -42,6 +49,7 @@ class BenchmarkResult:
 @dataclass
 class TestScenario:
     """测试场景定义"""
+
     name: str
     description: str
     data_generator: Callable
@@ -61,9 +69,7 @@ class TestDataGenerator:
         """设置本体模式"""
         # 创建测试对象类型
         test_object = ObjectType(
-            api_name="TestObject",
-            display_name="Test Object",
-            primary_key="id"
+            api_name="TestObject", display_name="Test Object", primary_key="id"
         )
         test_object.add_property("id", PropertyType.STRING)
         test_object.add_property("name", PropertyType.STRING)
@@ -76,9 +82,7 @@ class TestDataGenerator:
 
         # 创建复杂对象类型
         complex_object = ObjectType(
-            api_name="ComplexObject",
-            display_name="Complex Object",
-            primary_key="id"
+            api_name="ComplexObject", display_name="Complex Object", primary_key="id"
         )
         complex_object.add_property("id", PropertyType.STRING)
         complex_object.add_property("title", PropertyType.STRING)
@@ -96,12 +100,14 @@ class TestDataGenerator:
             display_name="Test Link",
             source_object_type="TestObject",
             target_object_type="TestObject",
-            cardinality="ONE_TO_MANY"
+            cardinality="ONE_TO_MANY",
         )
         ontology.register_link_type(link_type)
         self.link_types["TestLink"] = link_type
 
-    def generate_objects(self, count: int, object_type: str = "TestObject") -> List[ObjectInstance]:
+    def generate_objects(
+        self, count: int, object_type: str = "TestObject"
+    ) -> List[ObjectInstance]:
         """生成测试对象"""
         objects = []
         categories = ["active", "inactive", "pending", "completed"]
@@ -117,8 +123,8 @@ class TestDataGenerator:
                         "name": f"Test Object {i}",
                         "value": random.randint(1, 1000),
                         "status": random.choice(categories),
-                        "category": f"category_{i % 10}"
-                    }
+                        "category": f"category_{i % 10}",
+                    },
                 )
             else:  # ComplexObject
                 obj = ObjectInstance(
@@ -130,17 +136,20 @@ class TestDataGenerator:
                         "description": f"This is a complex object with number {i}",
                         "timestamp": time.time() * 1000 + i,
                         "tags": f"tag_{i % 20},type_{i % 5}",
-                        "priority": random.choice(priorities)
-                    }
+                        "priority": random.choice(priorities),
+                    },
                 )
             objects.append(obj)
 
         return objects
 
-    def generate_links(self, source_objects: List[ObjectInstance],
-                      target_objects: List[ObjectInstance],
-                      link_type: str = "TestLink",
-                      link_ratio: float = 0.3) -> List[Link]:
+    def generate_links(
+        self,
+        source_objects: List[ObjectInstance],
+        target_objects: List[ObjectInstance],
+        link_type: str = "TestLink",
+        link_ratio: float = 0.3,
+    ) -> List[Link]:
         """生成测试链接"""
         links = []
         link_count = int(len(source_objects) * link_ratio)
@@ -149,11 +158,13 @@ class TestDataGenerator:
             source = random.choice(source_objects)
             target = random.choice(target_objects)
 
-            links.append(Link(
-                link_type_api_name=link_type,
-                source_primary_key=source.primary_key_value,
-                target_primary_key=target.primary_key_value
-            ))
+            links.append(
+                Link(
+                    link_type_api_name=link_type,
+                    source_primary_key=source.primary_key_value,
+                    target_primary_key=target.primary_key_value,
+                )
+            )
 
         return links
 
@@ -167,7 +178,9 @@ class PerformanceBenchmark:
         self.data_generator = TestDataGenerator()
         self.results: List[BenchmarkResult] = []
 
-    def run_all_benchmarks(self, sizes: List[int] = None) -> Dict[str, List[BenchmarkResult]]:
+    def run_all_benchmarks(
+        self, sizes: List[int] = None
+    ) -> Dict[str, List[BenchmarkResult]]:
         """运行所有基准测试"""
         if sizes is None:
             sizes = [1000, 5000, 10000, 50000]
@@ -195,7 +208,7 @@ class PerformanceBenchmark:
                         operations_per_second=0,
                         success_count=0,
                         error_count=1,
-                        metadata={"error": str(e)}
+                        metadata={"error": str(e)},
                     )
                     scenario_results.append(error_result)
 
@@ -215,7 +228,7 @@ class PerformanceBenchmark:
                 data_generator=lambda n: self.data_generator.generate_objects(n),
                 test_function=self._test_object_creation,
                 expected_duration=100.0,
-                memory_limit=100.0
+                memory_limit=100.0,
             ),
             TestScenario(
                 name="primary_key_lookup",
@@ -223,7 +236,7 @@ class PerformanceBenchmark:
                 data_generator=lambda n: self.data_generator.generate_objects(n),
                 test_function=self._test_primary_key_lookup,
                 expected_duration=10.0,
-                memory_limit=50.0
+                memory_limit=50.0,
             ),
             TestScenario(
                 name="property_filter",
@@ -231,7 +244,7 @@ class PerformanceBenchmark:
                 data_generator=lambda n: self.data_generator.generate_objects(n),
                 test_function=self._test_property_filter,
                 expected_duration=50.0,
-                memory_limit=50.0
+                memory_limit=50.0,
             ),
             TestScenario(
                 name="complex_query",
@@ -239,7 +252,7 @@ class PerformanceBenchmark:
                 data_generator=lambda n: self.data_generator.generate_objects(n),
                 test_function=self._test_complex_query,
                 expected_duration=200.0,
-                memory_limit=100.0
+                memory_limit=100.0,
             ),
             TestScenario(
                 name="relationship_query",
@@ -247,7 +260,7 @@ class PerformanceBenchmark:
                 data_generator=self._generate_linked_data,
                 test_function=self._test_relationship_query,
                 expected_duration=150.0,
-                memory_limit=100.0
+                memory_limit=100.0,
             ),
             TestScenario(
                 name="bulk_operations",
@@ -255,15 +268,16 @@ class PerformanceBenchmark:
                 data_generator=lambda n: self.data_generator.generate_objects(n),
                 test_function=self._test_bulk_operations,
                 expected_duration=300.0,
-                memory_limit=200.0
-            )
+                memory_limit=200.0,
+            ),
         ]
 
     @contextmanager
     def _measure_performance(self):
         """性能测量上下文管理器"""
-        import psutil
         import gc
+
+        import psutil
 
         process = psutil.Process()
 
@@ -304,8 +318,8 @@ class PerformanceBenchmark:
             metadata={
                 "description": scenario.description,
                 "expected_duration": scenario.expected_duration,
-                "memory_limit": scenario.memory_limit
-            }
+                "memory_limit": scenario.memory_limit,
+            },
         )
 
     def _test_object_creation(self, objects: List[ObjectInstance]) -> Tuple[int, int]:
@@ -325,7 +339,9 @@ class PerformanceBenchmark:
 
         return success_count, error_count
 
-    def _test_primary_key_lookup(self, objects: List[ObjectInstance]) -> Tuple[int, int]:
+    def _test_primary_key_lookup(
+        self, objects: List[ObjectInstance]
+    ) -> Tuple[int, int]:
         """测试主键查询"""
         ontology = Ontology()
         self.data_generator.setup_ontology_schema(ontology)
@@ -389,12 +405,25 @@ class PerformanceBenchmark:
 
         # 复杂查询场景
         complex_queries = [
-            lambda: [obj for obj in ontology.get_objects_of_type("TestObject")
-                    if obj.get("value") > 500 and obj.get("status") == "active"],
-            lambda: [obj for obj in ontology.get_objects_of_type("TestObject")
-                    if obj.get("category").startswith("category_") and obj.get("value") % 2 == 0],
-            lambda: len([obj for obj in ontology.get_objects_of_type("TestObject")
-                       if obj.get("status") in ["active", "pending"] and obj.get("value") > 100])
+            lambda: [
+                obj
+                for obj in ontology.get_objects_of_type("TestObject")
+                if obj.get("value") > 500 and obj.get("status") == "active"
+            ],
+            lambda: [
+                obj
+                for obj in ontology.get_objects_of_type("TestObject")
+                if obj.get("category").startswith("category_")
+                and obj.get("value") % 2 == 0
+            ],
+            lambda: len(
+                [
+                    obj
+                    for obj in ontology.get_objects_of_type("TestObject")
+                    if obj.get("status") in ["active", "pending"]
+                    and obj.get("value") > 100
+                ]
+            ),
         ]
 
         for query_func in complex_queries:
@@ -412,7 +441,9 @@ class PerformanceBenchmark:
         links = self.data_generator.generate_links(objects, objects)
         return objects, links
 
-    def _test_relationship_query(self, data: Tuple[List[ObjectInstance], List[Link]]) -> Tuple[int, int]:
+    def _test_relationship_query(
+        self, data: Tuple[List[ObjectInstance], List[Link]]
+    ) -> Tuple[int, int]:
         """测试关系查询"""
         objects, links = data
 
@@ -427,7 +458,7 @@ class PerformanceBenchmark:
             ontology.create_link(
                 link.link_type_api_name,
                 link.source_primary_key,
-                link.target_primary_key
+                link.target_primary_key,
             )
 
         success_count = 0
@@ -442,9 +473,12 @@ class PerformanceBenchmark:
             # 查询特定对象的关联对象
             test_objects = objects[:10]
             for obj in test_objects:
-                related_links = [link for link in all_links
-                               if link.source_primary_key == obj.primary_key_value or
-                                  link.target_primary_key == obj.primary_key_value]
+                related_links = [
+                    link
+                    for link in all_links
+                    if link.source_primary_key == obj.primary_key_value
+                    or link.target_primary_key == obj.primary_key_value
+                ]
                 success_count += 1
 
         except Exception:
@@ -495,8 +529,10 @@ class PerformanceBenchmark:
             "timestamp": timestamp,
             "summary": {
                 "total_tests": len(self.results),
-                "average_duration": statistics.mean([r.execution_time for r in self.results if r.execution_time > 0]),
-                "total_errors": sum([r.error_count for r in self.results])
+                "average_duration": statistics.mean(
+                    [r.execution_time for r in self.results if r.execution_time > 0]
+                ),
+                "total_errors": sum([r.error_count for r in self.results]),
             },
             "results": {
                 scenario: [
@@ -507,36 +543,45 @@ class PerformanceBenchmark:
                         "operations_per_second": r.operations_per_second,
                         "success_count": r.success_count,
                         "error_count": r.error_count,
-                        "metadata": r.metadata
+                        "metadata": r.metadata,
                     }
                     for r in results
                 ]
                 for scenario, results in all_results.items()
-            }
+            },
         }
 
-        with open(json_file, 'w') as f:
+        with open(json_file, "w") as f:
             json.dump(json_data, f, indent=2)
 
         # 保存CSV格式
         csv_file = self.output_dir / f"benchmark_results_{timestamp}.csv"
-        with open(csv_file, 'w', newline='') as f:
+        with open(csv_file, "w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow([
-                'test_name', 'data_size', 'execution_time_ms', 'memory_usage_mb',
-                'operations_per_second', 'success_count', 'error_count'
-            ])
+            writer.writerow(
+                [
+                    "test_name",
+                    "data_size",
+                    "execution_time_ms",
+                    "memory_usage_mb",
+                    "operations_per_second",
+                    "success_count",
+                    "error_count",
+                ]
+            )
 
             for result in self.results:
-                writer.writerow([
-                    result.test_name,
-                    result.data_size,
-                    result.execution_time,
-                    result.memory_usage,
-                    result.operations_per_second,
-                    result.success_count,
-                    result.error_count
-                ])
+                writer.writerow(
+                    [
+                        result.test_name,
+                        result.data_size,
+                        result.execution_time,
+                        result.memory_usage,
+                        result.operations_per_second,
+                        result.success_count,
+                        result.error_count,
+                    ]
+                )
 
         print(f"Results saved to {json_file} and {csv_file}")
 
@@ -551,7 +596,9 @@ class PerformanceBenchmark:
         # 汇总统计
         total_tests = len(self.results)
         successful_tests = len([r for r in self.results if r.execution_time > 0])
-        avg_duration = statistics.mean([r.execution_time for r in self.results if r.execution_time > 0])
+        avg_duration = statistics.mean(
+            [r.execution_time for r in self.results if r.execution_time > 0]
+        )
 
         report.append("## Summary")
         report.append(f"- Total Tests: {total_tests}")
@@ -576,12 +623,18 @@ class PerformanceBenchmark:
 
             if durations:
                 report.append(f"- Data Sizes: {min(sizes)} - {max(sizes)}")
-                report.append(f"- Duration Range: {min(durations):.2f} - {max(durations):.2f} ms")
-                report.append(f"- Average Duration: {statistics.mean(durations):.2f} ms")
+                report.append(
+                    f"- Duration Range: {min(durations):.2f} - {max(durations):.2f} ms"
+                )
+                report.append(
+                    f"- Average Duration: {statistics.mean(durations):.2f} ms"
+                )
 
                 # 性能趋势
                 if len(durations) > 1:
-                    report.append(f"- Performance Trend: {self._calculate_trend(sizes, durations)}")
+                    report.append(
+                        f"- Performance Trend: {self._calculate_trend(sizes, durations)}"
+                    )
 
             report.append("")
 
@@ -615,9 +668,9 @@ class LoadTestScenario:
     def __init__(self, benchmark: PerformanceBenchmark):
         self.benchmark = benchmark
 
-    async def test_concurrent_reads(self, user_count: int = 50,
-                                  duration: int = 60,
-                                  operations_per_user: int = 100) -> Dict[str, Any]:
+    async def test_concurrent_reads(
+        self, user_count: int = 50, duration: int = 60, operations_per_user: int = 100
+    ) -> Dict[str, Any]:
         """并发读取测试"""
         # 准备测试数据
         ontology = Ontology()
@@ -633,16 +686,19 @@ class LoadTestScenario:
             errors = 0
             start_time = time.time()
 
-            while (time.time() - start_time < duration and
-                   operations < operations_per_user):
+            while (
+                time.time() - start_time < duration and operations < operations_per_user
+            ):
 
                 try:
                     # 随机查询操作
-                    operation = random.choice([
-                        self._pk_lookup_test,
-                        self._filter_test,
-                        self._relationship_test
-                    ])
+                    operation = random.choice(
+                        [
+                            self._pk_lookup_test,
+                            self._filter_test,
+                            self._relationship_test,
+                        ]
+                    )
 
                     result = await asyncio.get_event_loop().run_in_executor(
                         None, operation, ontology, test_objects
@@ -660,10 +716,10 @@ class LoadTestScenario:
                 await asyncio.sleep(0.01)
 
             return {
-                'user_id': user_id,
-                'operations': operations,
-                'errors': errors,
-                'duration': time.time() - start_time
+                "user_id": user_id,
+                "operations": operations,
+                "errors": errors,
+                "duration": time.time() - start_time,
             }
 
         # 启动并发用户
@@ -673,31 +729,43 @@ class LoadTestScenario:
         total_time = time.time() - start_time
 
         # 统计结果
-        total_operations = sum(result['operations'] for result in user_results)
-        total_errors = sum(result['errors'] for result in user_results)
+        total_operations = sum(result["operations"] for result in user_results)
+        total_errors = sum(result["errors"] for result in user_results)
 
         return {
-            'total_operations': total_operations,
-            'total_errors': total_errors,
-            'operations_per_second': total_operations / total_time,
-            'error_rate': total_errors / (total_operations + total_errors) if total_operations + total_errors > 0 else 0,
-            'average_user_latency': sum(result['duration'] for result in user_results) / len(user_results) * 1000,
-            'user_results': user_results
+            "total_operations": total_operations,
+            "total_errors": total_errors,
+            "operations_per_second": total_operations / total_time,
+            "error_rate": (
+                total_errors / (total_operations + total_errors)
+                if total_operations + total_errors > 0
+                else 0
+            ),
+            "average_user_latency": sum(result["duration"] for result in user_results)
+            / len(user_results)
+            * 1000,
+            "user_results": user_results,
         }
 
-    def _pk_lookup_test(self, ontology: Ontology, test_objects: List[ObjectInstance]) -> bool:
+    def _pk_lookup_test(
+        self, ontology: Ontology, test_objects: List[ObjectInstance]
+    ) -> bool:
         """主键查询测试"""
         random_obj = random.choice(test_objects)
         result = ontology.get_object("TestObject", random_obj.primary_key_value)
         return result is not None
 
-    def _filter_test(self, ontology: Ontology, test_objects: List[ObjectInstance]) -> bool:
+    def _filter_test(
+        self, ontology: Ontology, test_objects: List[ObjectInstance]
+    ) -> bool:
         """过滤查询测试"""
         all_objects = ontology.get_objects_of_type("TestObject")
         filtered = [obj for obj in all_objects if obj.get("status") == "active"]
         return len(filtered) >= 0
 
-    def _relationship_test(self, ontology: Ontology, test_objects: List[ObjectInstance]) -> bool:
+    def _relationship_test(
+        self, ontology: Ontology, test_objects: List[ObjectInstance]
+    ) -> bool:
         """关系查询测试"""
         links = ontology.get_all_links()
         return len(links) >= 0
@@ -720,8 +788,10 @@ def main():
     print("\n" + report)
 
     # 保存报告
-    report_file = Path("benchmark_results") / f"report_{time.strftime('%Y%m%d_%H%M%S')}.md"
-    with open(report_file, 'w') as f:
+    report_file = (
+        Path("benchmark_results") / f"report_{time.strftime('%Y%m%d_%H%M%S')}.md"
+    )
+    with open(report_file, "w") as f:
         f.write(report)
 
     print(f"\nReport saved to {report_file}")

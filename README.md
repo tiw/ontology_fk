@@ -123,3 +123,42 @@ action = ActionType(
 )
 ontology.register_action_type(action)
 ```
+
+## FastMCP 集成：让本体能力服务 LLM
+
+为了让 LLM 能够直接查询/编辑本体数据，本仓库新增了一个 FastMCP Server（基于 `fastmcp>=2.13`）。它会加载 `example/order_delivery` 场景的完整 ontology，并暴露安全的工具与结构化资源。
+
+### 快速启动
+
+```bash
+# 安装依赖（只需一次）
+uv pip install -e .[dev]
+
+# 启动 FastMCP Server（stdio，适合 Claude Desktop 等直接连接）
+uv run python example/order_delivery/fastmcp_server.py --transport stdio
+
+# 如需 HTTP/SSE，附带 host/port
+uv run python example/order_delivery/fastmcp_server.py --transport http --host 127.0.0.1 --port 8765
+```
+
+启动后，MCP 客户端会在连接时读取 `resource://ontology/schema` 与 `resource://ontology/guide` 获取结构信息，从而“知道”有哪些对象、动作与派生函数可用，再通过工具实现读写。
+
+### 工具一览
+
+| 工具 | 说明 |
+| --- | --- |
+| `list_object_types` / `list_link_types` | 浏览对象/链接 Schema 及字段 |
+| `list_actions` / `list_functions` | 查看可执行 Action、函数的参数约束 |
+| `list_objects` / `get_object` | 查询实体实例，可附 `filters_json` |
+| `get_related_objects` | 沿链接（如 `OrderHasMerchant`）遍历关联对象 |
+| `execute_action` | 执行动作（如 `CreateOrder`、`RiderDeliver`），参数以 JSON 传入 |
+| `invoke_function` | 调用函数（如 `calculate_t_gap`），支持对象引用 |
+
+所有工具都返回 JSON，方便 LLM 二次推理；对 Action/Function 的参数校验也遵循 ontology 中的类型定义，避免脏写。
+
+### 结构化资源
+
+- `resource://ontology/schema`：`Ontology.export_schema_for_llm()` 的 JSON 输出，囊括对象、属性、链接与动作。
+- `resource://ontology/guide`：Markdown 指南，列出示例调用、推荐工作流。
+
+LLM 在调用工具前应优先读取这些资源，以便理解字段含义、派生属性和动作依赖，从而“更聪明”地使用本体能力。

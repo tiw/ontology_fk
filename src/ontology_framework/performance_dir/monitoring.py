@@ -4,19 +4,20 @@
 提供实时性能监控、告警和统计功能。
 """
 
-import time
-import threading
-import statistics
-from typing import Dict, List, Any, Optional, Callable, Union
-from dataclasses import dataclass, field
-from collections import deque, defaultdict
-from enum import Enum
 import json
+import statistics
+import threading
+import time
+from collections import defaultdict, deque
 from contextlib import contextmanager
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Callable, Dict, List, Optional, Union
 
 
 class AlertSeverity(Enum):
     """告警严重程度"""
+
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
@@ -26,6 +27,7 @@ class AlertSeverity(Enum):
 @dataclass
 class MetricPoint:
     """指标数据点"""
+
     timestamp: float
     value: float
     tags: Dict[str, str] = field(default_factory=dict)
@@ -34,6 +36,7 @@ class MetricPoint:
 @dataclass
 class AlertRule:
     """告警规则"""
+
     name: str
     metric_name: str
     threshold: float
@@ -62,6 +65,7 @@ class AlertRule:
 @dataclass
 class Alert:
     """告警信息"""
+
     rule_name: str
     metric_name: str
     current_value: float
@@ -82,18 +86,18 @@ class TimeSeriesData:
 
     def add_point(self, metric_name: str, value: float, tags: Dict[str, str] = None):
         """添加数据点"""
-        point = MetricPoint(
-            timestamp=time.time(),
-            value=value,
-            tags=tags or {}
-        )
+        point = MetricPoint(timestamp=time.time(), value=value, tags=tags or {})
         self.data[metric_name].append(point)
 
-    def get_recent_points(self, metric_name: str, count: int = 100) -> List[MetricPoint]:
+    def get_recent_points(
+        self, metric_name: str, count: int = 100
+    ) -> List[MetricPoint]:
         """获取最近的数据点"""
         return list(self.data[metric_name])[-count:]
 
-    def get_points_in_range(self, metric_name: str, start_time: float, end_time: float) -> List[MetricPoint]:
+    def get_points_in_range(
+        self, metric_name: str, start_time: float, end_time: float
+    ) -> List[MetricPoint]:
         """获取指定时间范围内的数据点"""
         points = []
         for point in self.data[metric_name]:
@@ -107,11 +111,14 @@ class TimeSeriesData:
             return self.data[metric_name][-1].value
         return None
 
-    def get_statistics(self, metric_name: str, duration_seconds: int = 300) -> Dict[str, float]:
+    def get_statistics(
+        self, metric_name: str, duration_seconds: int = 300
+    ) -> Dict[str, float]:
         """获取统计信息"""
         cutoff_time = time.time() - duration_seconds
         recent_points = [
-            point.value for point in self.data[metric_name]
+            point.value
+            for point in self.data[metric_name]
             if point.timestamp >= cutoff_time
         ]
 
@@ -119,13 +126,21 @@ class TimeSeriesData:
             return {}
 
         return {
-            'count': len(recent_points),
-            'min': min(recent_points),
-            'max': max(recent_points),
-            'avg': statistics.mean(recent_points),
-            'median': statistics.median(recent_points),
-            'p95': statistics.quantiles(recent_points, n=20)[18] if len(recent_points) >= 20 else max(recent_points),
-            'p99': statistics.quantiles(recent_points, n=100)[98] if len(recent_points) >= 100 else max(recent_points)
+            "count": len(recent_points),
+            "min": min(recent_points),
+            "max": max(recent_points),
+            "avg": statistics.mean(recent_points),
+            "median": statistics.median(recent_points),
+            "p95": (
+                statistics.quantiles(recent_points, n=20)[18]
+                if len(recent_points) >= 20
+                else max(recent_points)
+            ),
+            "p99": (
+                statistics.quantiles(recent_points, n=100)[98]
+                if len(recent_points) >= 100
+                else max(recent_points)
+            ),
         }
 
 
@@ -179,9 +194,9 @@ class AlertManager:
                                 metric_name=rule.metric_name,
                                 operator=rule.operator,
                                 threshold=rule.threshold,
-                                value=current_value
+                                value=current_value,
                             ),
-                            timestamp=current_time
+                            timestamp=current_time,
                         )
 
                         self.active_alerts[rule_name] = alert
@@ -232,12 +247,12 @@ class PerformanceMonitor:
 
         # 内置指标
         self.builtin_metrics = {
-            'query_duration_ms',
-            'memory_usage_mb',
-            'cache_hit_rate',
-            'objects_count',
-            'operations_per_second',
-            'error_rate'
+            "query_duration_ms",
+            "memory_usage_mb",
+            "cache_hit_rate",
+            "objects_count",
+            "operations_per_second",
+            "error_rate",
         }
 
         # 监控状态
@@ -255,7 +270,9 @@ class PerformanceMonitor:
                 return
 
             self._monitoring = True
-            self._monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
+            self._monitor_thread = threading.Thread(
+                target=self._monitor_loop, daemon=True
+            )
             self._monitor_thread.start()
 
     def stop_monitoring(self):
@@ -301,10 +318,11 @@ class PerformanceMonitor:
         # 收集系统指标
         try:
             import psutil
+
             process = psutil.Process()
 
-            metrics['memory_usage_mb'] = process.memory_info().rss / 1024 / 1024
-            metrics['cpu_percent'] = process.cpu_percent()
+            metrics["memory_usage_mb"] = process.memory_info().rss / 1024 / 1024
+            metrics["cpu_percent"] = process.cpu_percent()
 
         except ImportError:
             pass
@@ -320,7 +338,7 @@ class PerformanceMonitor:
                 threshold=1024.0,  # 1GB
                 operator=">",
                 severity=AlertSeverity.HIGH,
-                message="Memory usage too high: {value:.2f} MB"
+                message="Memory usage too high: {value:.2f} MB",
             ),
             AlertRule(
                 name="high_query_duration",
@@ -328,7 +346,7 @@ class PerformanceMonitor:
                 threshold=1000.0,  # 1秒
                 operator=">",
                 severity=AlertSeverity.MEDIUM,
-                message="Query duration too long: {value:.2f} ms"
+                message="Query duration too long: {value:.2f} ms",
             ),
             AlertRule(
                 name="low_cache_hit_rate",
@@ -336,7 +354,7 @@ class PerformanceMonitor:
                 threshold=0.7,  # 70%
                 operator="<",
                 severity=AlertSeverity.MEDIUM,
-                message="Cache hit rate too low: {value:.2%}"
+                message="Cache hit rate too low: {value:.2%}",
             ),
             AlertRule(
                 name="high_error_rate",
@@ -344,8 +362,8 @@ class PerformanceMonitor:
                 threshold=0.05,  # 5%
                 operator=">",
                 severity=AlertSeverity.HIGH,
-                message="Error rate too high: {value:.2%}"
-            )
+                message="Error rate too high: {value:.2%}",
+            ),
         ]
 
         for rule in default_rules:
@@ -356,7 +374,9 @@ class PerformanceMonitor:
         with self._lock:
             self.custom_metrics[metric_name] = metric_func
 
-    def record_metric(self, metric_name: str, value: float, tags: Dict[str, str] = None):
+    def record_metric(
+        self, metric_name: str, value: float, tags: Dict[str, str] = None
+    ):
         """记录指标"""
         self.metrics_data.add_point(metric_name, value, tags)
 
@@ -382,17 +402,19 @@ class PerformanceMonitor:
             status_metric = f"{operation_name}_{'success' if success else 'error'}"
             self.record_metric(status_metric, 1, tags)
 
-    def get_metric_statistics(self, metric_name: str, duration_seconds: int = 300) -> Dict[str, float]:
+    def get_metric_statistics(
+        self, metric_name: str, duration_seconds: int = 300
+    ) -> Dict[str, float]:
         """获取指标统计信息"""
         return self.metrics_data.get_statistics(metric_name, duration_seconds)
 
     def get_dashboard_data(self) -> Dict[str, Any]:
         """获取仪表板数据"""
         dashboard = {
-            'timestamp': time.time(),
-            'metrics': {},
-            'alerts': [],
-            'summary': {}
+            "timestamp": time.time(),
+            "metrics": {},
+            "alerts": [],
+            "summary": {},
         }
 
         # 收集最新指标值
@@ -400,28 +422,28 @@ class PerformanceMonitor:
             latest_value = self.metrics_data.get_latest_value(metric_name)
             if latest_value is not None:
                 stats = self.metrics_data.get_statistics(metric_name)
-                dashboard['metrics'][metric_name] = {
-                    'current': latest_value,
-                    'stats': stats
+                dashboard["metrics"][metric_name] = {
+                    "current": latest_value,
+                    "stats": stats,
                 }
 
         # 获取活跃告警
-        dashboard['alerts'] = [
+        dashboard["alerts"] = [
             {
-                'rule_name': alert.rule_name,
-                'metric_name': alert.metric_name,
-                'severity': alert.severity.value,
-                'message': alert.message,
-                'timestamp': alert.timestamp
+                "rule_name": alert.rule_name,
+                "metric_name": alert.metric_name,
+                "severity": alert.severity.value,
+                "message": alert.message,
+                "timestamp": alert.timestamp,
             }
             for alert in self.alert_manager.get_active_alerts()
         ]
 
         # 生成摘要
-        dashboard['summary'] = {
-            'total_metrics': len(dashboard['metrics']),
-            'active_alerts': len(dashboard['alerts']),
-            'monitoring_active': self._monitoring
+        dashboard["summary"] = {
+            "total_metrics": len(dashboard["metrics"]),
+            "active_alerts": len(dashboard["alerts"]),
+            "monitoring_active": self._monitoring,
         }
 
         return dashboard
@@ -431,19 +453,21 @@ class PerformanceMonitor:
         cutoff_time = time.time() - duration_seconds
 
         exported_data = {
-            'export_time': time.time(),
-            'duration_seconds': duration_seconds,
-            'metrics': {}
+            "export_time": time.time(),
+            "duration_seconds": duration_seconds,
+            "metrics": {},
         }
 
         for metric_name in self.builtin_metrics.union(self.custom_metrics.keys()):
-            points = self.metrics_data.get_points_in_range(metric_name, cutoff_time, time.time())
+            points = self.metrics_data.get_points_in_range(
+                metric_name, cutoff_time, time.time()
+            )
             if points:
-                exported_data['metrics'][metric_name] = [
+                exported_data["metrics"][metric_name] = [
                     {
-                        'timestamp': point.timestamp,
-                        'value': point.value,
-                        'tags': point.tags
+                        "timestamp": point.timestamp,
+                        "value": point.value,
+                        "tags": point.tags,
                     }
                     for point in points
                 ]
@@ -512,29 +536,38 @@ class RealtimeMonitor:
 
         report = ["Real-time Performance Monitor Report", "=" * 50, ""]
         report.append(f"Generated at: {time.strftime('%Y-%m-%d %H:%M:%S')}")
-        report.append(f"Monitoring Status: {'Active' if self.monitor._monitoring else 'Inactive'}")
+        report.append(
+            f"Monitoring Status: {'Active' if self.monitor._monitoring else 'Inactive'}"
+        )
         report.append("")
 
         # 指标概览
         report.append("Metrics Overview:")
-        for metric_name, metric_data in dashboard['metrics'].items():
-            current = metric_data['current']
-            stats = metric_data['stats']
+        for metric_name, metric_data in dashboard["metrics"].items():
+            current = metric_data["current"]
+            stats = metric_data["stats"]
 
             report.append(f"  {metric_name}:")
             report.append(f"    Current: {current:.2f}")
-            if 'avg' in stats:
+            if "avg" in stats:
                 report.append(f"    Average (5min): {stats['avg']:.2f}")
-            if 'p95' in stats:
+            if "p95" in stats:
                 report.append(f"    P95 (5min): {stats['p95']:.2f}")
             report.append("")
 
         # 告警信息
-        if dashboard['alerts']:
+        if dashboard["alerts"]:
             report.append("Active Alerts:")
-            for alert in dashboard['alerts']:
-                severity_icon = {"low": "🔵", "medium": "🟡", "high": "🟠", "critical": "🔴"}[alert['severity']]
-                report.append(f"  {severity_icon} [{alert['severity'].upper()}] {alert['rule_name']}")
+            for alert in dashboard["alerts"]:
+                severity_icon = {
+                    "low": "🔵",
+                    "medium": "🟡",
+                    "high": "🟠",
+                    "critical": "🔴",
+                }[alert["severity"]]
+                report.append(
+                    f"  {severity_icon} [{alert['severity'].upper()}] {alert['rule_name']}"
+                )
                 report.append(f"    {alert['message']}")
                 report.append("")
         else:
@@ -547,6 +580,7 @@ class RealtimeMonitor:
 # 便捷的装饰器和函数
 def monitor_performance(monitor: PerformanceMonitor, operation_name: str = None):
     """性能监控装饰器"""
+
     def decorator(func: Callable):
         nonlocal operation_name
         if operation_name is None:
@@ -555,7 +589,9 @@ def monitor_performance(monitor: PerformanceMonitor, operation_name: str = None)
         def wrapper(*args, **kwargs):
             with monitor.track_operation(operation_name):
                 return func(*args, **kwargs)
+
         return wrapper
+
     return decorator
 
 
@@ -569,7 +605,7 @@ def create_default_monitor() -> PerformanceMonitor:
             AlertSeverity.LOW: "🔵",
             AlertSeverity.MEDIUM: "🟡",
             AlertSeverity.HIGH: "🟠",
-            AlertSeverity.CRITICAL: "🔴"
+            AlertSeverity.CRITICAL: "🔴",
         }
 
         if not alert.resolved:
