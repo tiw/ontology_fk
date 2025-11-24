@@ -1,0 +1,181 @@
+{
+  "analysis_timestamp": "2025-11-24T00:00:00.000Z",
+  "project_info": {
+    "name": "ontology-fk",
+    "version": "0.1.0",
+    "language": "python",
+    "framework": "semantic ontology framework"
+  },
+  "scan_coverage": {
+    "total_files_analyzed": 18,
+    "core_modules": 6,
+    "examples": 5,
+    "tests": 3,
+    "documentation": 2,
+    "coverage_percentage": 95
+  },
+  "modules": [
+    {
+      "name": "core",
+      "path": "src/ontology_framework/core.py",
+      "type": "framework_core",
+      "responsibility": "本体定义和管理核心组件",
+      "key_classes": ["Ontology", "ObjectType", "LinkType", "ActionType", "ObjectInstance", "ObjectSet"],
+      "test_coverage": true,
+      "status": "complete"
+    },
+    {
+      "name": "functions",
+      "path": "src/ontology_framework/functions.py",
+      "type": "function_system",
+      "responsibility": "函数注册和执行系统",
+      "key_classes": ["FunctionRegistry", "ontology_function"],
+      "test_coverage": false,
+      "status": "complete"
+    },
+    {
+      "name": "permissions",
+      "path": "src/ontology_framework/permissions.py",
+      "type": "security",
+      "responsibility": "访问控制和权限管理",
+      "key_classes": ["AccessControlList", "Principal", "PermissionType"],
+      "test_coverage": false,
+      "status": "complete"
+    },
+    {
+      "name": "services",
+      "path": "src/ontology_framework/services.py",
+      "type": "service_layer",
+      "responsibility": "对象集合服务，模拟存储层",
+      "key_classes": ["ObjectSetService"],
+      "test_coverage": false,
+      "status": "complete"
+    },
+    {
+      "name": "applications",
+      "path": "src/ontology_framework/applications.py",
+      "type": "ui_layer",
+      "responsibility": "应用层组件（视图、浏览器、分析）",
+      "key_classes": ["ObjectView", "ObjectExplorer", "Quiver"],
+      "test_coverage": false,
+      "status": "complete"
+    }
+  ],
+  "examples": [
+    {
+      "name": "order_delivery",
+      "path": "example/order_delivery/",
+      "description": "订单配送业务模型示例",
+      "status": "complete",
+      "files": ["schema.py", "run.py", "simulation.py", "verify_oag.py"]
+    },
+    {
+      "name": "factory_ontology",
+      "path": "examples/factory_ontology.py",
+      "description": "工厂本体管理和权限控制示例",
+      "status": "complete"
+    }
+  ],
+  "tests": [
+    {
+      "file": "tests/test_core.py",
+      "coverage": "object/link/action type registration",
+      "status": "complete"
+    },
+    {
+      "file": "tests/test_links.py",
+      "coverage": "unknown",
+      "status": "needs_review"
+    },
+    {
+      "file": "tests/test_actions.py",
+      "coverage": "unknown",
+      "status": "needs_review"
+    }
+  ],
+  "documentation": [
+    {
+      "file": "README.md",
+      "status": "complete",
+      "content": "项目介绍、安装指南、基础使用示例"
+    },
+    {
+      "file": "doc/API_REFERENCE.md",
+      "status": "complete",
+      "content": "详细的API参考文档"
+    }
+  ],
+  "gaps": {
+    "missing_tests": [
+      "functions module",
+      "permissions module",
+      "services module",
+      "applications module",
+      "integration tests",
+      "performance tests"
+    ],
+    "missing_documentation": [
+      "architecture design docs",
+      "developer guide",
+      "deployment guide",
+      "best practices"
+    ],
+    "missing_features": [
+      "data persistence layer",
+      "error handling system",
+      "logging system",
+      "performance optimization",
+      "CLI tools"
+    ]
+  },
+  "ignored_patterns": [
+    ".venv/**",
+    ".pytest_cache/**",
+    "__pycache__/**",
+    "*.pyc"
+  ],
+  "truncated": false,
+  "next_scan_priorities": [
+    "src/ontology_framework/core.py (complete analysis)",
+    "src/ontology_framework/services.py (in-depth review)",
+    "example/order_delivery/ (complete workflow analysis)",
+    "tests/ (complete test coverage analysis)"
+  ],
+  "quality_metrics": {
+    "code_structure": 8,
+    "type_safety": 9,
+    "extensibility": 8,
+    "test_coverage": 4,
+    "documentation": 6,
+    "error_handling": 5
+  },
+  "improvement_recommendations": [
+    {
+      "priority": "high",
+      "category": "testing",
+      "items": [
+        "Add comprehensive test suite for all modules",
+        "Implement integration tests",
+        "Add performance benchmarks"
+      ]
+    },
+    {
+      "priority": "high",
+      "category": "error_handling",
+      "items": [
+        "Create exception hierarchy",
+        "Add detailed error messages",
+        "Implement error recovery mechanisms"
+      ]
+    },
+    {
+      "priority": "medium",
+      "category": "performance",
+      "items": [
+        "Implement real indexing system",
+        "Add caching mechanisms",
+        "Optimize query performance"
+      ]
+    }
+  ]
+}

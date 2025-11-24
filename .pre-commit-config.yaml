@@ -1,0 +1,125 @@
+# Pre-commit hooks 配置文件
+# 在提交代码前自动运行质量检查
+
+repos:
+  # 基础代码格式化工具
+  - repo: https://github.com/psf/black
+    rev: 24.4.0
+    hooks:
+      - id: black
+        language_version: python3.12
+        args: [--check, --diff]
+
+  # 导入语句排序
+  - repo: https://github.com/pycqa/isort
+    rev: 5.13.2
+    hooks:
+      - id: isort
+        args: [--check-only, --diff]
+
+  # 代码风格检查
+  - repo: https://github.com/pycqa/flake8
+    rev: 7.0.0
+    hooks:
+      - id: flake8
+        additional_dependencies:
+          - flake8-docstrings
+          - flake8-bugbear
+          - flake8-comprehensions
+
+  # 类型检查
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.9.0
+    hooks:
+      - id: mypy
+        additional_dependencies:
+          - types-all
+          - types-requests
+        args: [--strict]
+
+  # 安全检查
+  - repo: https://github.com/pycqa/bandit
+    rev: 1.7.8
+    hooks:
+      - id: bandit
+        args: ['-r', 'src/', '-c', 'pyproject.toml']
+        pass_filenames: false
+
+  # 安全漏洞检查
+  - repo: https://github.com/pyupio/safety
+    rev: 2.3.5
+    hooks:
+      - id: safety
+        args: [--ignore=51858, --ignore=51499]  # 忽略特定的误报
+
+  # 删除未使用的导入
+  - repo: https://github.com/pycqa/autoflake
+    rev: v2.2.1
+    hooks:
+      - id: autoflake
+        args:
+          - --in-place
+          - --remove-all-unused-imports
+          - --remove-unused-variables
+          - --remove-duplicate-keys
+          - --ignore-init-module-imports
+
+  # 提交信息检查
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: 3.21.3
+    hooks:
+      - id: commitizen
+        stages: [commit-msg]
+
+  # 本地自定义钩子
+  - repo: local
+    hooks:
+      # 运行测试
+      - id: pytest-check
+        name: pytest-check
+        entry: uv run pytest tests/unit/
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [push]
+
+      # 检查测试覆盖率
+      - id: coverage-check
+        name: coverage-check
+        entry: uv run pytest --cov=src/ontology_framework --cov-fail-under=75
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [push]
+
+      # 代码复杂度检查
+      - id: complexity-check
+        name: complexity-check
+        entry: radon cc src --min B
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # 文档字符串检查
+      - id: docstring-check
+        name: docstring-check
+        entry: pydocstyle src/
+        language: system
+        types: [python]
+
+# 全局配置
+default_language_version:
+  python: python3.12
+
+# CI配置
+ci:
+  autofix_commit_msg: |
+    [pre-commit.ci] auto fixes from pre-commit.com hooks
+
+    for more information, see https://pre-commit.ci
+  autofix_prs: true
+  autoupdate_branch: ''
+  autoupdate_commit_msg: '[pre-commit.ci] pre-commit autoupdate'
+  autoupdate_schedule: weekly
+  skip: []
+  submodules: false
