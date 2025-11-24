@@ -146,7 +146,7 @@ class ObjectSet:
         ]
         return ObjectSet(self.object_type, filtered_objects, self._ontology)
 
-    def search_around(self, link_type_api_name: str) -> 'ObjectSet':
+    def search_around(self, link_type_api_name: str, **filters) -> 'ObjectSet':
         if not self._ontology:
             raise ValueError("Ontology context is required for search_around")
         
@@ -154,46 +154,48 @@ class ObjectSet:
         if not link_type:
             raise ValueError(f"Link type {link_type_api_name} not found")
         
-        # Verify direction and types
+        # Determine direction
+        direction = None
+        target_type_name = None
+        
         if link_type.source_object_type == self.object_type.api_name:
-            target_type_name = link_type.target_object_type
             direction = "forward"
+            target_type_name = link_type.target_object_type
         elif link_type.target_object_type == self.object_type.api_name:
-            # Assuming we might want to support reverse traversal if link types are bidirectional or if we check both ends
-            # For this implementation, we will stick to the definition: LinkType defines Source -> Target.
-            # If we want reverse, we'd need to know if it's supported. 
-            # Let's assume strict direction for now as per LinkType definition.
-            raise ValueError(f"Object set type {self.object_type.api_name} is not the source of link {link_type_api_name}")
+            direction = "reverse"
+            target_type_name = link_type.source_object_type
         else:
-             raise ValueError(f"Link type {link_type_api_name} does not start from {self.object_type.api_name}")
+             raise ValueError(f"Link type {link_type_api_name} does not connect to {self.object_type.api_name}")
 
         target_object_type = self._ontology.get_object_type(target_type_name)
         if not target_object_type:
              raise ValueError(f"Target object type {target_type_name} not found")
 
-        # Collect all source PKs
-        source_pks = {obj.primary_key_value for obj in self._objects}
+        # Collect all current PKs
+        current_pks = {obj.primary_key_value for obj in self._objects}
         
         # Find links
-        # This is an inefficient O(N*M) scan, but fine for prototype
         related_target_pks = set()
         for link in self._ontology.get_all_links():
-            if link.link_type_api_name == link_type_api_name and link.source_primary_key in source_pks:
-                related_target_pks.add(link.target_primary_key)
+            if link.link_type_api_name == link_type_api_name:
+                if direction == "forward" and link.source_primary_key in current_pks:
+                    related_target_pks.add(link.target_primary_key)
+                elif direction == "reverse" and link.target_primary_key in current_pks:
+                    related_target_pks.add(link.source_primary_key)
         
         # Fetch target objects
-        # In a real system, this would be a DB query. Here we need a way to get objects by PK.
-        # We'll add a helper to Ontology to get all objects of a type or specific objects.
-        # For now, let's assume Ontology stores objects too or we have a way to get them.
-        # Wait, Ontology class currently doesn't store ObjectInstances, only Types.
-        # I need to add an Object Store to Ontology or pass it in.
-        # Let's add a simple object store to Ontology for this simulation.
-        
         target_objects = []
         all_potential_targets = self._ontology.get_objects_of_type(target_type_name)
         for obj in all_potential_targets:
             if obj.primary_key_value in related_target_pks:
-                target_objects.append(obj)
+                # Apply filters
+                match = True
+                for prop, val in filters.items():
+                    if obj.get(prop) != val:
+                        match = False
+                        break
+                if match:
+                    target_objects.append(obj)
                 
         return ObjectSet(target_object_type, target_objects, self._ontology)
 
@@ -512,3 +514,54 @@ class Ontology:
 
     def get_all_links(self) -> List[Link]:
         return self._links
+
+    def export_schema_for_llm(self) -> Dict[str, Any]:
+        """Exports the ontology schema in a format suitable for LLM prompts."""
+        schema = {
+            "object_types": [],
+            "link_types": [],
+            "action_types": []
+        }
+        
+        for ot in self.object_types.values():
+            obj_def = {
+                "api_name": ot.api_name,
+                "display_name": ot.display_name,
+                "description": ot.description,
+                "primary_key": ot.primary_key,
+                "properties": [
+                    {"name": p.name, "type": p.type.value, "description": p.description}
+                    for p in ot.properties.values()
+                ],
+                "derived_properties": [
+                    {"name": p.name, "type": p.type.value, "description": p.description}
+                    for p in ot.derived_properties.values()
+                ]
+            }
+            schema["object_types"].append(obj_def)
+            
+        for lt in self.link_types.values():
+            link_def = {
+                "api_name": lt.api_name,
+                "display_name": lt.display_name,
+                "source": lt.source_object_type,
+                "target": lt.target_object_type,
+                "cardinality": lt.cardinality,
+                "description": lt.description
+            }
+            schema["link_types"].append(link_def)
+            
+        for at in self.action_types.values():
+            action_def = {
+                "api_name": at.api_name,
+                "display_name": at.display_name,
+                "description": at.description,
+                "targets": at.target_object_types,
+                "parameters": [
+                    {"name": p.name, "type": p.data_type.value, "required": p.required, "description": p.description}
+                    for p in at.parameters.values()
+                ]
+            }
+            schema["action_types"].append(action_def)
+            
+        return schema
