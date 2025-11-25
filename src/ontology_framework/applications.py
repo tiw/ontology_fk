@@ -8,11 +8,20 @@ def _object_snapshot(
     obj: ObjectInstance, properties: Optional[List[str]] = None
 ) -> Dict[str, Any]:
     """Convert an ObjectInstance into a lightweight dict for agent consumption."""
-    if properties is None or not properties:
-        props = obj.property_values
+    if properties:
+        props = {prop: obj.get(prop) for prop in properties}
     else:
-        props = {prop: obj.property_values.get(prop) for prop in properties}
-    return {"primary_key": obj.primary_key_value, "properties": props}
+        props = dict(obj.property_values)
+        if obj._ontology:
+            obj_type = obj._ontology.get_object_type(obj.object_type_api_name)
+            if obj_type:
+                for derived_name in obj_type.derived_properties.keys():
+                    props[derived_name] = obj.get(derived_name)
+
+    snapshot = {"primary_key": obj.primary_key_value, "properties": props}
+    if obj.runtime_metadata:
+        snapshot["annotations"] = dict(obj.runtime_metadata)
+    return snapshot
 
 
 @dataclass

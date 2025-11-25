@@ -11,7 +11,9 @@ from fastmcp import FastMCP
 
 from ontology_framework.core import (
     FunctionArgument,
+    LinkType,
     ObjectInstance,
+    ObjectSet,
     ObjectSetTypeSpec,
     ObjectType,
     ObjectTypeSpec,
@@ -229,6 +231,7 @@ def _serialize_object(
     obj: ObjectInstance,
     *,
     include_derived: bool,
+    include_runtime_metadata: bool = False,
 ) -> dict[str, Any]:
     serialized: dict[str, Any] = {
         "object_type": obj.object_type_api_name,
@@ -243,6 +246,8 @@ def _serialize_object(
             for prop in obj_type.derived_properties:
                 derived[prop] = obj.get(prop)
         serialized["derived_properties"] = derived
+    if include_runtime_metadata and obj.runtime_metadata:
+        serialized["runtime_metadata"] = dict(obj.runtime_metadata)
     return serialized
 
 
@@ -469,7 +474,11 @@ def get_object(
         obj = ONTOLOGY.get_object(object_type, primary_key)
         if obj is None:
             raise ValueError(f"未找到 {object_type}:{primary_key}")
-        return _serialize_object(obj, include_derived=include_derived)
+        return _serialize_object(
+            obj,
+            include_derived=include_derived,
+            include_runtime_metadata=True,
+        )
 
 
 @server.tool(
@@ -493,69 +502,93 @@ def list_objects(
         for instance in instances:
             if _match_filters(instance, filters):
                 matched.append(
-                    _serialize_object(instance, include_derived=include_derived)
+                    _serialize_object(
+                        instance,
+                        include_derived=include_derived,
+                        include_runtime_metadata=True,
+                    )
                 )
             if len(matched) >= limit:
                 break
         return matched
 
 
-@server.tool(name="get_related_objects", description="沿链接关系查找关联实体")
+@server.tool(name="get_related_objects", description="沿链接关系查找关联实体并执行治理逻辑")
 def get_related_objects(
     object_type: str,
     primary_key: str,
     link_type_api_name: str,
     direction: Literal["auto", "forward", "reverse"] = "auto",
+    filters_json: Optional[str] = None,
+    limit: int = 20,
 ) -> dict[str, Any]:
+    raw_filters = _load_json(filters_json)
+    normalized_filters = {
+        (key.split(".", 1)[1] if key.startswith("derived.") else key): value
+        for key, value in raw_filters.items()
+    }
+    limit = max(1, min(limit, 100))
     with ONTOLOGY_LOCK:
+        obj_type = ONTOLOGY.get_object_type(object_type)
+        if not obj_type:
+            raise ValueError(f"未知对象类型：{object_type}")
         anchor = ONTOLOGY.get_object(object_type, primary_key)
         if not anchor:
             raise ValueError(f"未找到对象 {object_type}:{primary_key}")
         link_type = ONTOLOGY.get_link_type(link_type_api_name)
         if not link_type:
             raise ValueError(f"未知链接类型：{link_type_api_name}")
-        traversal = direction
-        if traversal == "auto":
-            if link_type.source_object_type == object_type:
-                traversal = "forward"
-            elif link_type.target_object_type == object_type:
-                traversal = "reverse"
-            else:
-                raise ValueError(
-                    f"对象类型 {object_type} 与链接 {link_type_api_name} 不匹配，请指定 direction"
-                )
-        related_pks: list[str] = []
-        for link in ONTOLOGY.get_all_links():
-            if link.link_type_api_name != link_type_api_name:
-                continue
-            if (
-                traversal == "forward"
-                and link.source_primary_key == primary_key
-            ):
-                related_pks.append(link.target_primary_key)
-            elif (
-                traversal == "reverse"
-                and link.target_primary_key == primary_key
-            ):
-                related_pks.append(link.source_primary_key)
-        target_type = (
-            link_type.target_object_type
-            if traversal == "forward"
-            else link_type.source_object_type
+        traversal = _resolve_traversal(direction, obj_type.api_name, link_type)
+        anchor_set = ObjectSet(obj_type, [anchor], ontology=ONTOLOGY)
+        related_set = anchor_set.search_around(
+            link_type_api_name, limit=limit, **normalized_filters
         )
         related_objects = [
             _serialize_object(
-                ONTOLOGY.get_object(target_type, pk), include_derived=True
+                obj,
+                include_derived=True,
+                include_runtime_metadata=True,
             )
-            for pk in related_pks
-            if ONTOLOGY.get_object(target_type, pk)
+            for obj in related_set.all()
         ]
         return {
             "direction": traversal,
             "link_type": link_type_api_name,
-            "anchor": _serialize_object(anchor, include_derived=True),
+            "anchor": _serialize_object(
+                anchor, include_derived=True, include_runtime_metadata=True
+            ),
             "related": related_objects,
         }
+
+
+def _resolve_traversal(
+    requested: Literal["auto", "forward", "reverse"],
+    anchor_type: str,
+    link_type: LinkType,
+) -> Literal["forward", "reverse"]:
+    if requested == "auto":
+        if link_type.source_object_type == anchor_type:
+            return "forward"
+        if link_type.target_object_type == anchor_type:
+            return "reverse"
+        raise ValueError(
+            f"对象类型 {anchor_type} 与链接 {link_type.api_name} 不匹配，请指定 direction"
+        )
+    if requested == "forward":
+        if link_type.source_object_type != anchor_type:
+            raise ValueError(
+                f"链接 {link_type.api_name} 源对象为 {link_type.source_object_type}，"
+                f"无法从 {anchor_type} 按 forward 方向遍历"
+            )
+        return "forward"
+    if requested == "reverse":
+        if link_type.target_object_type != anchor_type:
+            raise ValueError(
+                f"链接 {link_type.api_name} 目标对象为 {link_type.target_object_type}，"
+                f"无法从 {anchor_type} 按 reverse 方向遍历"
+            )
+        return "reverse"
+    raise ValueError(f"不支持的 direction: {requested}")
 
 
 @server.tool(name="execute_action", description="执行本体中的动作（Action）")

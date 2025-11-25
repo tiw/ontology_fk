@@ -85,6 +85,56 @@ def calculate_t_gap(order):
         return user_t - actual_t
     return None
 
+@ontology_function(
+    api_name="validate_order_merchant_link",
+    display_name="Validate Order/Merchant Link",
+    inputs={
+        "order": ObjectTypeSpec("Order"),
+        "merchant": ObjectTypeSpec("Merchant"),
+    },
+    description="确保订单中的 merchant_id 与关联商户一致",
+)
+def validate_order_merchant_link(order, merchant):
+    merchant_id = order.get("merchant_id")
+    target_id = merchant.get("merchant_id")
+    return merchant_id is None or merchant_id == target_id
+
+
+@ontology_function(
+    api_name="validate_order_rider_assignment",
+    display_name="Validate Order/Rider Link",
+    inputs={
+        "order": ObjectTypeSpec("Order"),
+        "rider": ObjectTypeSpec("Rider"),
+    },
+    description="若订单已指派骑手，则需匹配 rider_id",
+)
+def validate_order_rider_assignment(order, rider):
+    rider_id = order.get("rider_id")
+    target_id = rider.get("rider_id")
+    if rider_id is None:
+        # 允许订单暂未分配骑手
+        return True
+    return rider_id == target_id
+
+
+@ontology_function(
+    api_name="score_order_rider_timeliness",
+    display_name="Score Rider Timeliness",
+    inputs={
+        "order": ObjectTypeSpec("Order"),
+        "rider": ObjectTypeSpec("Rider"),
+    },
+    output_type=PrimitiveType(PropertyType.INTEGER),
+    description="根据订单 t_gap 对骑手表现进行评分",
+)
+def score_order_rider_timeliness(order, rider):
+    gap = order.get("t_gap_min")
+    if gap is None:
+        return 0
+    # gap > 0 表示提前（奖励），gap < 0 表示迟到（扣分），限制在 [-30, 30]
+    return max(-30, min(30, gap))
+
 # 3. Define Link Types
 
 def create_link_order_merchant() -> LinkType:
@@ -93,7 +143,8 @@ def create_link_order_merchant() -> LinkType:
         display_name="Order Merchant",
         source_object_type="Order",
         target_object_type="Merchant",
-        cardinality="ONE_TO_ONE" # Each order has one merchant
+        cardinality="ONE_TO_ONE", # Each order has one merchant
+        validation_functions=["validate_order_merchant_link"]
     )
 
 def create_link_order_rider() -> LinkType:
@@ -102,7 +153,9 @@ def create_link_order_rider() -> LinkType:
         display_name="Order Rider",
         source_object_type="Order",
         target_object_type="Rider",
-        cardinality="ONE_TO_ONE"
+        cardinality="ONE_TO_ONE",
+        validation_functions=["validate_order_rider_assignment"],
+        scoring_function_api_name="score_order_rider_timeliness"
     )
 
 # 4. Define Action Types

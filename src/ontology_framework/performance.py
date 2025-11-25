@@ -8,6 +8,7 @@ import time
 import threading
 import hashlib
 import json
+from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Callable, Union, Tuple
 from dataclasses import dataclass, field
 from collections import defaultdict, OrderedDict
@@ -317,6 +318,26 @@ class IndexManager:
                 return True
             return False
 
+    def create_property_index(
+        self,
+        object_type_name: str,
+        property_name: str,
+        *,
+        unique: bool = False,
+        case_sensitive: bool = True,
+        index_type: str = "hash",
+    ) -> PropertyIndex:
+        """基于对象类型/属性快速创建索引"""
+        index_name = f"{object_type_name}_{property_name}_idx"
+        definition = IndexDefinition(
+            name=index_name,
+            property_name=property_name,
+            index_type=index_type,
+            unique=unique,
+            case_sensitive=case_sensitive,
+        )
+        return self.create_index(definition)
+
     def list_indexes(self) -> List[str]:
         """列出所有索引名称"""
         with self.lock:
@@ -326,6 +347,11 @@ class IndexManager:
         """获取所有索引统计信息"""
         with self.lock:
             return {name: index.get_stats() for name, index in self.indexes.items()}
+
+    # 兼容旧版 API
+    def get_index_stats(self) -> Dict[str, Dict[str, Any]]:
+        """向后兼容的别名，返回所有索引统计信息"""
+        return self.get_all_stats()
 
 
 # 查询优化器
@@ -591,6 +617,8 @@ class PerformanceMonitor:
     def __init__(self):
         self.metrics: Dict[str, PerformanceMetrics] = {}
         self.lock = threading.RLock()
+        self.custom_metrics: Dict[str, Callable[[], float]] = {}
+        self._monitoring: bool = True
 
     def record_operation(self, operation_name: str, execution_time: float, success: bool = True):
         """记录操作"""
@@ -617,6 +645,79 @@ class PerformanceMonitor:
                 self.metrics.pop(operation_name, None)
             else:
                 self.metrics.clear()
+
+    def add_custom_metric(self, metric_name: str, metric_func: Callable[[], float]) -> None:
+        """注册自定义指标计算函数"""
+        with self.lock:
+            self.custom_metrics[metric_name] = metric_func
+
+    def remove_custom_metric(self, metric_name: str) -> None:
+        """移除自定义指标"""
+        with self.lock:
+            self.custom_metrics.pop(metric_name, None)
+
+    @contextmanager
+    def track_operation(self, operation_name: str):
+        """上下文管理器，自动记录操作耗时与结果"""
+        start_time = time.time()
+        success = True
+        try:
+            yield
+        except Exception:
+            success = False
+            raise
+        finally:
+            duration = time.time() - start_time
+            self.record_operation(operation_name, duration, success)
+
+    def start_monitoring(self) -> None:
+        """标记监控开始"""
+        with self.lock:
+            self._monitoring = True
+
+    def stop_monitoring(self) -> None:
+        """标记监控结束"""
+        with self.lock:
+            self._monitoring = False
+
+    def get_dashboard_data(self) -> Dict[str, Any]:
+        """返回监控仪表盘数据，便于 UI/LLM 消费"""
+        with self.lock:
+            metrics_snapshot = {
+                name: {
+                    "count": metric.operation_count,
+                    "avg_time": metric.avg_time,
+                    "min_time": metric.min_time if metric.operation_count else 0.0,
+                    "max_time": metric.max_time,
+                    "error_rate": metric.error_rate,
+                }
+                for name, metric in self.metrics.items()
+            }
+            custom_funcs = dict(self.custom_metrics)
+            monitoring_active = self._monitoring
+
+        custom_values: Dict[str, Optional[float]] = {}
+        for metric_name, metric_func in custom_funcs.items():
+            try:
+                custom_values[metric_name] = float(metric_func())
+            except Exception:
+                custom_values[metric_name] = None
+
+        summary = {
+            "operations_tracked": sum(m["count"] for m in metrics_snapshot.values()),
+            "operations_with_errors": sum(
+                int(m["error_rate"] > 0) for m in metrics_snapshot.values()
+            ),
+            "custom_metric_count": len(custom_values),
+        }
+
+        return {
+            "timestamp": time.time(),
+            "monitoring_active": monitoring_active,
+            "metrics": metrics_snapshot,
+            "custom_metrics": custom_values,
+            "summary": summary,
+        }
 
 
 def performance_monitored(operation_name: Optional[str] = None):
@@ -753,11 +854,15 @@ class PerformanceOptimizerAdapter:
     def install_optimizations(self):
         """安装性能优化"""
         # 为现有对象创建缓存
-        if hasattr(self.ontology, '_object_store'):
+        cache_manager = (
+            getattr(self.ontology, "_cache_manager", None)
+            or getattr(self.ontology, "cache_manager", None)
+            or get_cache_manager()
+        )
+        if hasattr(self.ontology, "_object_store"):
             for object_type_name, objects in self.ontology._object_store.items():
-                # 为每个对象类型创建缓存
                 cache_name = f"objects_{object_type_name}"
-                self.ontology._cache_manager.get_cache(cache_name)
+                cache_manager.get_cache(cache_name)
 
         # 为常用查询创建索引
         if hasattr(self.ontology, 'object_types'):

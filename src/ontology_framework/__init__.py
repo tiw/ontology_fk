@@ -9,6 +9,7 @@ from .core import (
     PropertyType,
 )
 from .functions import ontology_function
+from .osdk import OntologySDK
 from .permissions import AccessControlList, PermissionType, Principal
 from .services import ObjectSetService
 from .exceptions import (
@@ -77,6 +78,7 @@ __all__ = [
     "PropertyType",
     "ObjectInstance",
     "ObjectSet",
+    "OntologySDK",
 
     # Functions and services
     "ontology_function",

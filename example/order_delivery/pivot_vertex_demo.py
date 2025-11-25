@@ -11,7 +11,14 @@
 from __future__ import annotations
 
 from pprint import pprint
-from typing import Dict, List
+from typing import Dict, List, Optional
+
+try:
+    import matplotlib.pyplot as plt  # type: ignore
+    import networkx as nx  # type: ignore
+except ImportError:  # pragma: no cover - 仅在运行时提示
+    plt = None
+    nx = None
 
 from ontology_framework.core import ActionContext, ObjectInstance, ObjectSet, Ontology
 from ontology_framework.applications import (
@@ -303,6 +310,62 @@ def build_system_graph(vertex: Vertex, seed_set: ObjectSet) -> Dict[str, Dict]:
     )
 
 
+def render_system_graph(
+    graph_payload: Dict[str, Dict],
+    output_path: str = "late_orders_graph.png",
+) -> Optional[str]:
+    """
+    将 Vertex 返回的节点/边数据可视化为 PNG。
+
+    - 依赖 networkx + matplotlib；若未安装，则给出友好提示并跳过绘图。
+    - 不追求严谨布局，使用 spring_layout 以获得可读性即可。
+    - 不同对象类型使用不同颜色，方便区分订单/商户/骑手。
+    """
+    if plt is None or nx is None:
+        print("未安装 matplotlib/networkx，跳过图谱绘制。")
+        return None
+
+    graph = nx.DiGraph()
+    color_palette = {
+        "Order": "#ff9800",
+        "Merchant": "#4caf50",
+        "Rider": "#2196f3",
+    }
+    fallback_color = "#9e9e9e"
+
+    for node_id, node_data in graph_payload["nodes"].items():
+        graph.add_node(
+            node_id,
+            object_type=node_data.get("object_type", "Unknown"),
+            properties=node_data.get("properties", {}),
+        )
+
+    for edge in graph_payload["edges"]:
+        graph.add_edge(edge["source"], edge["target"], link_type=edge["link_type"])
+
+    if not graph.nodes:
+        print("图谱为空，跳过绘制。")
+        return None
+
+    node_colors = []
+    for node_id in graph.nodes:
+        obj_type = graph.nodes[node_id].get("object_type", "Unknown")
+        node_colors.append(color_palette.get(obj_type, fallback_color))
+
+    plt.figure(figsize=(10, 8))
+    pos = nx.spring_layout(graph, seed=42)
+    nx.draw_networkx_nodes(graph, pos, node_color=node_colors, node_size=800, alpha=0.9)
+    nx.draw_networkx_edges(graph, pos, arrows=True, arrowstyle="->", alpha=0.5)
+    nx.draw_networkx_labels(graph, pos, font_size=9)
+    plt.title("Late Orders System Graph (Order -> Merchant/Rider)")
+    plt.axis("off")
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=200)
+    plt.close()
+    print(f"图谱已保存至 {output_path}")
+    return output_path
+
+
 # --- Object View 导出 -----------------------------------------------------------------------------
 
 
@@ -354,6 +417,7 @@ def run_demo():
     # 4. Vertex：构建图谱 & 运行模拟
     vertex = configure_vertex(ontology)
     graph_payload = build_system_graph(vertex, late_order_set)
+    render_system_graph(graph_payload)
     sample_order = late_order_set.all()[0]
     hypo_result = vertex.run_simulation(
         "hypothetical_delivery_gap",

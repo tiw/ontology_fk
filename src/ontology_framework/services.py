@@ -6,10 +6,12 @@ from .core import (
     ActionContext,
     ActionLog,
     ActionType,
+    Notification,
     ObjectInstance,
     ObjectSet,
     ObjectType,
     Ontology,
+    Webhook,
 )
 from .permissions import AccessControlList, PermissionType, Principal
 
@@ -122,12 +124,17 @@ class ActionService:
 
         # 7. Execute Side Effects
         for effect in action_type.side_effects:
-            # In a real system, these would be async tasks
-            if hasattr(effect, "recipients"):  # Notification
-                print(
-                    f"[Notification] Sending to {effect.recipients}: {effect.message}"
-                )
-            elif hasattr(effect, "url"):  # Webhook
-                print(f"[Webhook] {effect.method} {effect.url}")
+            effect_attrs = getattr(effect, "__dict__", {})
+            if isinstance(effect, Notification) or "recipients" in effect_attrs:
+                recipients = getattr(effect, "recipients", effect_attrs.get("recipients", []))
+                message = getattr(effect, "message", effect_attrs.get("message", ""))
+                print(f"[Notification] Sending to {recipients}: {message}")
+                continue
+
+            if isinstance(effect, Webhook) or "url" in effect_attrs:
+                method = getattr(effect, "method", effect_attrs.get("method", "POST"))
+                url = getattr(effect, "url", effect_attrs.get("url"))
+                print(f"[Webhook] {method} {url}")
+                continue
 
         return log

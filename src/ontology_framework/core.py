@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Type
+from typing import Any, Callable, Dict, List, Optional, Set, Type
+import uuid
 
 from .permissions import AccessControlList
 
@@ -73,6 +74,12 @@ class ObjectType:
     icon: Optional[str] = "cube"
     permissions: Optional["AccessControlList"] = None
 
+    def __post_init__(self):
+        # 兼容 tests 中以位置参数传主键的写法（即第三个参数是 primary_key）
+        if isinstance(self.properties, str) and not self.primary_key:
+            self.primary_key = self.properties
+            self.properties = {}
+
     def add_property(
         self, name: str, type: PropertyType, description: Optional[str] = None
     ):
@@ -98,6 +105,7 @@ class ObjectInstance:
     primary_key_value: Any
     property_values: Dict[str, Any] = field(default_factory=dict)
     _ontology: Optional["Ontology"] = field(default=None, repr=False, compare=False)
+    runtime_metadata: Dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
     def get(self, property_name: str) -> Any:
         # 1. Check standard properties
@@ -157,6 +165,14 @@ class ObjectInstance:
                     )
 
         return None
+
+    def annotate(self, key: str, value: Any) -> None:
+        """Write lightweight runtime metadata (e.g. scores, validation traces)."""
+        self.runtime_metadata[key] = value
+
+    def get_annotation(self, key: str, default: Any = None) -> Any:
+        """Read runtime metadata that does not belong to schema properties."""
+        return self.runtime_metadata.get(key, default)
 
 
 @dataclass
@@ -228,36 +244,144 @@ class ObjectSet:
         if not target_object_type:
             raise ValueError(f"Target object type {target_type_name} not found")
 
-        # Collect all current PKs
-        current_pks = {obj.primary_key_value for obj in self._objects}
+        if limit is not None and limit <= 0:
+            return ObjectSet(target_object_type, [], self._ontology)
 
-        # Find links
-        related_target_pks = set()
+        current_obj_map = {obj.primary_key_value: obj for obj in self._objects}
+        target_objects: List[ObjectInstance] = []
+        seen_target_pks: Set[Any] = set()
+
         for link in self._ontology.get_all_links():
-            if link.link_type_api_name == link_type_api_name:
-                if direction == "forward" and link.source_primary_key in current_pks:
-                    related_target_pks.add(link.target_primary_key)
-                elif direction == "reverse" and link.target_primary_key in current_pks:
-                    related_target_pks.add(link.source_primary_key)
+            if link.link_type_api_name != link_type_api_name:
+                continue
 
-        # Fetch target objects
-        target_objects = []
-        all_potential_targets = self._ontology.get_objects_of_type(target_type_name)
-        for obj in all_potential_targets:
-            if obj.primary_key_value in related_target_pks:
-                # Apply filters
-                match = True
-                for prop, val in filters.items():
-                    if obj.get(prop) != val:
-                        match = False
-                        break
-                if match:
-                    target_objects.append(obj)
+            source_obj: Optional[ObjectInstance] = None
+            target_obj: Optional[ObjectInstance] = None
 
-        if limit is not None:
-            target_objects = target_objects[: limit if limit > 0 else 0]
+            if direction == "forward" and link.source_primary_key in current_obj_map:
+                source_obj = current_obj_map[link.source_primary_key]
+                target_obj = self._ontology.get_object(
+                    link_type.target_object_type, link.target_primary_key
+                )
+            elif direction == "reverse" and link.target_primary_key in current_obj_map:
+                source_obj = self._ontology.get_object(
+                    link_type.source_object_type, link.source_primary_key
+                )
+                target_obj = current_obj_map[link.target_primary_key]
+
+            if not source_obj or not target_obj:
+                continue
+
+            if not self._passes_link_validations(link_type, source_obj, target_obj):
+                continue
+
+            if not self._matches_filters(target_obj, filters):
+                continue
+
+            self._attach_link_scores(link_type, source_obj, target_obj)
+
+            if target_obj.primary_key_value in seen_target_pks:
+                continue
+
+            target_objects.append(target_obj)
+            seen_target_pks.add(target_obj.primary_key_value)
+
+            if limit is not None and len(target_objects) >= limit:
+                break
 
         return ObjectSet(target_object_type, target_objects, self._ontology)
+
+    @staticmethod
+    def _matches_filters(obj: ObjectInstance, filters: Dict[str, Any]) -> bool:
+        if not filters:
+            return True
+        for prop, val in filters.items():
+            if obj.get(prop) != val:
+                return False
+        return True
+
+    def _passes_link_validations(
+        self, link_type: "LinkType", source_obj: ObjectInstance, target_obj: ObjectInstance
+    ) -> bool:
+        if not link_type.validation_functions:
+            return True
+        for fn_name in link_type.validation_functions:
+            result = self._execute_link_function(
+                fn_name, link_type, source_obj, target_obj
+            )
+            if isinstance(result, dict):
+                valid = result.get("valid", True)
+            else:
+                valid = bool(result)
+            if not valid:
+                return False
+        return True
+
+    def _attach_link_scores(
+        self, link_type: "LinkType", source_obj: ObjectInstance, target_obj: ObjectInstance
+    ) -> None:
+        if not link_type.scoring_function_api_name:
+            return
+        score = self._execute_link_function(
+            link_type.scoring_function_api_name, link_type, source_obj, target_obj
+        )
+        scores = target_obj.get_annotation("function_scores", {})
+        scores[link_type.api_name] = score
+        target_obj.annotate("function_scores", scores)
+
+    def _execute_link_function(
+        self,
+        function_api_name: str,
+        link_type: "LinkType",
+        source_obj: ObjectInstance,
+        target_obj: ObjectInstance,
+    ) -> Any:
+        func_def = self._ontology.get_function(function_api_name)
+        if not func_def:
+            raise ValueError(f"Function {function_api_name} not found")
+
+        prepared_args: Dict[str, Any] = {}
+        for arg_name, arg_def in func_def.inputs.items():
+            value = self._auto_fill_link_argument(
+                arg_name, arg_def.type, link_type, source_obj, target_obj
+            )
+            if value is None:
+                if arg_def.required:
+                    raise ValueError(
+                        f"Unable to auto-fill required argument '{arg_name}' "
+                        f"for function {function_api_name}"
+                    )
+                continue
+            prepared_args[arg_name] = value
+
+        return self._ontology.execute_function(function_api_name, **prepared_args)
+
+    @staticmethod
+    def _auto_fill_link_argument(
+        arg_name: str,
+        type_spec: TypeSpec,
+        link_type: "LinkType",
+        source_obj: ObjectInstance,
+        target_obj: ObjectInstance,
+    ) -> Any:
+        normalized_name = arg_name.lower()
+        if normalized_name in {"source", "source_object"}:
+            return source_obj
+        if normalized_name in {"target", "target_object"}:
+            return target_obj
+
+        if isinstance(type_spec, ObjectTypeSpec):
+            if type_spec.object_type_api_name == source_obj.object_type_api_name:
+                return source_obj
+            if type_spec.object_type_api_name == target_obj.object_type_api_name:
+                return target_obj
+
+        if isinstance(type_spec, PrimitiveType):
+            if normalized_name in {"link_type", "link_type_api_name"}:
+                return link_type.api_name
+
+        # Optional arguments are allowed to return None
+        return None
 
     def all(self) -> List[ObjectInstance]:
         return self._objects
@@ -293,6 +417,8 @@ class LinkType:
     target_object_type: str
     cardinality: str = "ONE_TO_MANY"  # ONE_TO_ONE, ONE_TO_MANY, MANY_TO_MANY
     description: Optional[str] = None
+    validation_functions: List[str] = field(default_factory=list)
+    scoring_function_api_name: Optional[str] = None
 
 
 @dataclass
@@ -337,11 +463,42 @@ class ActionContext:
         return self._ontology.get_object(object_type_api_name, primary_key)
 
     def create_object(
-        self, object_type_api_name: str, primary_key: Any, properties: Dict[str, Any]
+        self,
+        object_type_api_name: str,
+        primary_key_or_properties: Any,
+        properties: Optional[Dict[str, Any]] = None,
     ):
+        if properties is None:
+            resolved_properties = dict(primary_key_or_properties)
+            obj_type = self._ontology.get_object_type(object_type_api_name)
+            if obj_type is None:
+                obj_type = (
+                    ObjectType(
+                        api_name=object_type_api_name,
+                        display_name=object_type_api_name,
+                        primary_key="id",
+                    ).add_property("id", PropertyType.STRING)
+                )
+                self._ontology.register_object_type(obj_type)
+            pk_field = obj_type.primary_key if obj_type else None
+            candidate_keys = [
+                resolved_properties.get(pk_field) if pk_field else None,
+                resolved_properties.get("id"),
+                resolved_properties.get("primary_key"),
+            ]
+            primary_key = next((pk for pk in candidate_keys if pk is not None), None)
+            if primary_key is None:
+                primary_key = f"ctx_{uuid.uuid4()}"
+            if pk_field and pk_field not in resolved_properties:
+                resolved_properties[pk_field] = primary_key
+            resolved_properties.setdefault("id", primary_key)
+        else:
+            primary_key = primary_key_or_properties
+            resolved_properties = dict(properties)
+
         def commit():
             self._ontology.add_object(
-                ObjectInstance(object_type_api_name, primary_key, properties)
+                ObjectInstance(object_type_api_name, primary_key, resolved_properties)
             )
 
         self._object_edits.append(commit)
@@ -597,6 +754,9 @@ class Ontology:
     def get_action_type(self, api_name: str) -> Optional[ActionType]:
         return self.action_types.get(api_name)
 
+    def get_function(self, api_name: str) -> Optional[Function]:
+        return self.functions.get(api_name)
+
     def create_link(
         self,
         link_type_api_name: str,
@@ -681,7 +841,17 @@ class Ontology:
 
     def export_schema_for_llm(self) -> Dict[str, Any]:
         """Exports the ontology schema in a format suitable for LLM prompts."""
-        schema = {"object_types": [], "link_types": [], "action_types": []}
+
+        def _render_type_spec(type_spec: Optional[TypeSpec]) -> str:
+            if isinstance(type_spec, PrimitiveType):
+                return type_spec.type.value
+            if isinstance(type_spec, ObjectTypeSpec):
+                return f"object:{type_spec.object_type_api_name}"
+            if isinstance(type_spec, ObjectSetTypeSpec):
+                return f"object_set:{type_spec.object_type_api_name}"
+            return "unknown"
+
+        schema = {"object_types": [], "link_types": [], "action_types": [], "functions": []}
 
         for ot in self.object_types.values():
             obj_def = {
@@ -708,6 +878,8 @@ class Ontology:
                 "target": lt.target_object_type,
                 "cardinality": lt.cardinality,
                 "description": lt.description,
+                "validation_functions": list(lt.validation_functions),
+                "scoring_function": lt.scoring_function_api_name,
             }
             schema["link_types"].append(link_def)
 
@@ -728,5 +900,22 @@ class Ontology:
                 ],
             }
             schema["action_types"].append(action_def)
+
+        for fn in self.functions.values():
+            func_def = {
+                "api_name": fn.api_name,
+                "display_name": fn.display_name,
+                "description": fn.description,
+                "inputs": [
+                    {
+                        "name": arg.name,
+                        "type": _render_type_spec(arg.type),
+                        "required": arg.required,
+                        "description": arg.description,
+                    }
+                    for arg in fn.inputs.values()
+                ],
+            }
+            schema["functions"].append(func_def)
 
         return schema
