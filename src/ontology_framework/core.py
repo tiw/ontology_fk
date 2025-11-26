@@ -1,9 +1,10 @@
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Set, Type
+from typing import Any, Callable, Dict, List, Optional, Set, Type, Protocol
 import uuid
 
 from .permissions import AccessControlList
+from .datasources import DataSourceAdapter, InMemoryDataSource, DataSourceError
 
 
 class PropertyType(Enum):
@@ -182,17 +183,61 @@ class Link:
     target_primary_key: Any
 
 
+class LinkStore(Protocol):
+    """抽象链接存储，便于替换为外部介质。"""
+
+    def list_links(self, link_type_api_name: Optional[str] = None) -> List[Link]:
+        ...
+
+    def add_link(self, link: Link) -> None:
+        ...
+
+    def delete_link(self, link_type_api_name: str, source_pk: Any, target_pk: Any) -> None:
+        ...
+
+
+class InMemoryLinkStore:
+    """默认的内存链接存储实现。"""
+
+    def __init__(self):
+        self._links: List[Link] = []
+
+    def list_links(self, link_type_api_name: Optional[str] = None) -> List[Link]:
+        if not link_type_api_name:
+            return list(self._links)
+        return [link for link in self._links if link.link_type_api_name == link_type_api_name]
+
+    def add_link(self, link: Link) -> None:
+        self._links.append(link)
+
+    def delete_link(self, link_type_api_name: str, source_pk: Any, target_pk: Any) -> None:
+        self._links = [
+            l
+            for l in self._links
+            if not (
+                l.link_type_api_name == link_type_api_name
+                and l.source_primary_key == source_pk
+                and l.target_primary_key == target_pk
+            )
+        ]
+
+
 class ObjectSet:
     def __init__(
         self,
         object_type: ObjectType,
         objects: List[ObjectInstance] = None,
         ontology: "Ontology" = None,
+        filters: Optional[Dict[str, Any]] = None,
+        limit: Optional[int] = None,
+        lazy: bool = False,
     ):
         self.object_type = object_type
-        self._objects = objects or []
-        self._filters = []
+        self._objects = list(objects) if objects else []
         self._ontology = ontology
+        self._lazy = lazy
+        self._query_filters = dict(filters or {}) if lazy else {}
+        self._lazy_limit = limit if lazy else None
 
     def add(self, obj: ObjectInstance):
         if obj.object_type_api_name != self.object_type.api_name:
@@ -207,11 +252,20 @@ class ObjectSet:
         return self._ontology
 
     def filter(self, property_name: str, value: Any) -> "ObjectSet":
-        # Simple exact match filter for now
+        if self._lazy and self._ontology:
+            merged_filters = dict(self._query_filters)
+            merged_filters[property_name] = value
+            return ObjectSet(
+                self.object_type,
+                objects=None,
+                ontology=self._ontology,
+                filters=merged_filters,
+                limit=self._lazy_limit,
+                lazy=True,
+            )
+
         filtered_objects = [
-            obj
-            for obj in self._objects
-            if obj.property_values.get(property_name) == value
+            obj for obj in self.all() if obj.property_values.get(property_name) == value
         ]
         return ObjectSet(self.object_type, filtered_objects, self._ontology)
 
@@ -247,7 +301,7 @@ class ObjectSet:
         if limit is not None and limit <= 0:
             return ObjectSet(target_object_type, [], self._ontology)
 
-        current_obj_map = {obj.primary_key_value: obj for obj in self._objects}
+        current_obj_map = {obj.primary_key_value: obj for obj in self.all()}
         target_objects: List[ObjectInstance] = []
         seen_target_pks: Set[Any] = set()
 
@@ -384,12 +438,19 @@ class ObjectSet:
         return None
 
     def all(self) -> List[ObjectInstance]:
+        if self._lazy and self._ontology:
+            self._objects = self._ontology.scan_objects(
+                self.object_type.api_name, self._query_filters, self._lazy_limit
+            )
+            self._lazy = False
+            self._query_filters = {}
+            self._lazy_limit = None
         return self._objects
 
     def aggregate(self, property_name: str, function: str) -> float:
         values = [
             obj.property_values.get(property_name)
-            for obj in self._objects
+            for obj in self.all()
             if obj.property_values.get(property_name) is not None
         ]
         if not values:
@@ -509,6 +570,8 @@ class ActionContext:
     def modify_object(
         self, object_instance: ObjectInstance, property_name: str, value: Any
     ):
+        self._ontology.ensure_object_type_writable(object_instance.object_type_api_name)
+
         # We need to modify the object in place OR replace it.
         # Since ObjectInstance is a dataclass, it's mutable.
         # But we want to defer execution until commit.
@@ -648,35 +711,134 @@ class Ontology:
         self._object_store: Dict[str, Dict[Any, ObjectInstance]] = (
             {}
         )  # type_name -> {pk -> instance}
-        self._links: List[Link] = []
+        self._link_store: LinkStore = InMemoryLinkStore()
+        self._datasources: Dict[str, DataSourceAdapter] = {}
+        self._default_datasource_id = "__memory__"
+        self._memory_datasource = InMemoryDataSource(
+            self._object_store, adapter_id=self._default_datasource_id
+        )
+        self.register_datasource(self._memory_datasource)
+
+    def register_datasource(self, adapter: DataSourceAdapter):
+        self._datasources[adapter.id] = adapter
+
+    def set_link_store(self, link_store: LinkStore):
+        self._link_store = link_store
+
+    def get_datasource(self, adapter_id: str) -> DataSourceAdapter:
+        if adapter_id not in self._datasources:
+            raise ValueError(f"Datasource {adapter_id} not registered")
+        return self._datasources[adapter_id]
+
+    def _get_datasource_for_type(self, object_type: ObjectType) -> DataSourceAdapter:
+        datasource_id = object_type.backing_datasource_id or self._default_datasource_id
+        if datasource_id not in self._datasources:
+            raise ValueError(
+                f"Datasource {datasource_id} not available for {object_type.api_name}"
+            )
+        return self._datasources[datasource_id]
+
+    def _attach_context(self, obj: Optional[ObjectInstance]) -> Optional[ObjectInstance]:
+        if obj:
+            obj._ontology = self
+        return obj
+
+    def _attach_context_many(self, objects: List[ObjectInstance]) -> List[ObjectInstance]:
+        for obj in objects:
+            obj._ontology = self
+        return objects
+
+    def is_type_read_only(self, object_type_api_name: str) -> bool:
+        obj_type = self.object_types.get(object_type_api_name)
+        if not obj_type:
+            return True
+        datasource = self._get_datasource_for_type(obj_type)
+        return datasource.read_only
+
+    def ensure_object_type_writable(self, object_type_api_name: str):
+        obj_type = self.object_types.get(object_type_api_name)
+        if not obj_type:
+            raise ValueError(f"Unknown object type: {object_type_api_name}")
+        self._ensure_writable(obj_type)
+
+    def _ensure_writable(self, object_type: ObjectType):
+        datasource = self._get_datasource_for_type(object_type)
+        if datasource.read_only:
+            raise DataSourceError(
+                f"Datasource '{datasource.id}' backing '{object_type.api_name}' is read-only"
+            )
 
     def register_object_type(self, object_type: ObjectType):
+        if not object_type.backing_datasource_id:
+            object_type.backing_datasource_id = self._default_datasource_id
         self.object_types[object_type.api_name] = object_type
-        self._object_store[object_type.api_name] = {}
+        self._object_store.setdefault(object_type.api_name, {})
         print(f"Registered Object Type: {object_type.api_name}")
 
     def add_object(self, object_instance: ObjectInstance):
-        if object_instance.object_type_api_name not in self.object_types:
+        obj_type = self.object_types.get(object_instance.object_type_api_name)
+        if not obj_type:
             raise ValueError(
                 f"Unknown object type: {object_instance.object_type_api_name}"
             )
-        self._object_store[object_instance.object_type_api_name][
-            object_instance.primary_key_value
-        ] = object_instance
+        self._ensure_writable(obj_type)
+        datasource = self._get_datasource_for_type(obj_type)
+        datasource.upsert(obj_type, object_instance)
         object_instance._ontology = self
 
     def get_object(self, type_name: str, primary_key: Any) -> Optional[ObjectInstance]:
-        return self._object_store.get(type_name, {}).get(primary_key)
+        obj_type = self.object_types.get(type_name)
+        if not obj_type:
+            return None
+        datasource = self._get_datasource_for_type(obj_type)
+        obj = datasource.fetch_object(obj_type, primary_key)
+        return self._attach_context(obj)
 
     def delete_object(self, type_name: str, primary_key: Any):
-        if (
-            type_name in self._object_store
-            and primary_key in self._object_store[type_name]
-        ):
-            del self._object_store[type_name][primary_key]
+        obj_type = self.object_types.get(type_name)
+        if not obj_type:
+            return
+        self._ensure_writable(obj_type)
+        datasource = self._get_datasource_for_type(obj_type)
+        datasource.delete(obj_type, primary_key)
+
+    def scan_objects(
+        self,
+        object_type_api_name: str,
+        filters: Optional[Dict[str, Any]] = None,
+        limit: Optional[int] = None,
+    ) -> List[ObjectInstance]:
+        obj_type = self.object_types.get(object_type_api_name)
+        if not obj_type:
+            return []
+        datasource = self._get_datasource_for_type(obj_type)
+        objects = list(datasource.scan(obj_type, filters=filters, limit=limit))
+        return self._attach_context_many(objects)
 
     def get_objects_of_type(self, type_name: str) -> List[ObjectInstance]:
-        return list(self._object_store.get(type_name, {}).values())
+        return self.scan_objects(type_name)
+
+    def build_object_set(
+        self,
+        object_type_api_name: str,
+        filters: Optional[Dict[str, Any]] = None,
+        limit: Optional[int] = None,
+        lazy: bool = True,
+    ) -> ObjectSet:
+        obj_type = self.object_types.get(object_type_api_name)
+        if not obj_type:
+            raise ValueError(f"Unknown object type: {object_type_api_name}")
+        if not lazy:
+            objects = self.scan_objects(object_type_api_name, filters=filters, limit=limit)
+            return ObjectSet(obj_type, objects, self)
+        return ObjectSet(
+            obj_type,
+            objects=None,
+            ontology=self,
+            filters=filters,
+            limit=limit,
+            lazy=True,
+        )
 
     def register_link_type(self, link_type: LinkType):
         # Validate existence of object types
@@ -781,12 +943,10 @@ class Ontology:
             raise ValueError(f"Link type {link_type_api_name} not found")
 
         # Validate objects exist
-        source_objs = self._object_store.get(link_type.source_object_type, {})
-        if source_pk not in source_objs:
+        if not self.get_object(link_type.source_object_type, source_pk):
             raise ValueError(f"Source object {source_pk} not found")
 
-        target_objs = self._object_store.get(link_type.target_object_type, {})
-        if target_pk not in target_objs:
+        if not self.get_object(link_type.target_object_type, target_pk):
             raise ValueError(f"Target object {target_pk} not found")
 
         # Check cardinality (simplified, just check duplicates for now)
@@ -795,7 +955,7 @@ class Ontology:
         # So we don't strictly enforce uniqueness on Source unless it's ONE_TO_ONE.
 
         # Check if link already exists
-        for link in self._links:
+        for link in self._link_store.list_links(link_type_api_name):
             if (
                 link.link_type_api_name == link_type_api_name
                 and link.source_primary_key == source_pk
@@ -803,7 +963,7 @@ class Ontology:
             ):
                 return  # Already exists
 
-        self._links.append(Link(link_type_api_name, source_pk, target_pk))
+        self._link_store.add_link(Link(link_type_api_name, source_pk, target_pk))
 
     def delete_link(
         self,
@@ -817,18 +977,10 @@ class Ontology:
             if required_perm not in user_permissions:
                 raise PermissionError(f"Missing permission: {required_perm}")
 
-        self._links = [
-            l
-            for l in self._links
-            if not (
-                l.link_type_api_name == link_type_api_name
-                and l.source_primary_key == source_pk
-                and l.target_primary_key == target_pk
-            )
-        ]
+        self._link_store.delete_link(link_type_api_name, source_pk, target_pk)
 
     def get_all_links(self) -> List[Link]:
-        return self._links
+        return self._link_store.list_links()
 
     def get_link_types_for_object(self, object_type_api_name: str) -> List[LinkType]:
         """Return every LinkType touching the given object type (any direction)."""
