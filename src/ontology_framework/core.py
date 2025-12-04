@@ -1,7 +1,9 @@
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Set, Type, Protocol
+from typing import Any, Callable, Dict, List, Optional, Set, Type, Protocol, Union
 import uuid
+import time
 
 from .permissions import AccessControlList
 from .datasources import DataSourceAdapter, InMemoryDataSource, DataSourceError
@@ -220,6 +222,119 @@ class InMemoryLinkStore:
                 and l.target_primary_key == target_pk
             )
         ]
+
+
+@dataclass
+class ObjectSetDefinition:
+    id: str
+    type: str  # "STATIC", "DYNAMIC", "TEMPORARY", "PERMANENT"
+    object_type_api_name: str
+    static_pks: Optional[List[Any]] = None
+    filters: Optional[Dict[str, Any]] = None
+    created_by: str = "system"
+    created_at: float = field(default_factory=time.time)
+    expiration_time: Optional[float] = None
+
+
+class ObjectSetService:
+    def __init__(self, ontology: "Ontology"):
+        self._ontology = ontology
+        self._store: Dict[str, ObjectSetDefinition] = {}
+
+    def save_object_set(
+        self, object_set: "ObjectSet", persistence_type: str = "TEMPORARY"
+    ) -> str:
+        """
+        Saves an ObjectSet and returns its RID.
+        persistence_type: "TEMPORARY" or "PERMANENT"
+        """
+        if persistence_type not in ("TEMPORARY", "PERMANENT"):
+            raise ValueError("persistence_type must be TEMPORARY or PERMANENT")
+
+        rid = self._generate_rid(persistence_type)
+        
+        # Determine if Static or Dynamic
+        # If the ObjectSet was created with filters and is lazy (or we can reconstruct filters), it's Dynamic.
+        # If it's an arbitrary list of objects (e.g. result of search_around or manual add), it's Static.
+        
+        # Current heuristic:
+        # If it has _query_filters and they are not empty, treat as Dynamic (reproducible).
+        # Otherwise, treat as Static (snapshot of PKs).
+        
+        # Note: search_around returns a static set in current impl (it executes immediately).
+        # To support dynamic search_around, we'd need to store the chain of operations.
+        # For now, we stick to the simple definition:
+        # Dynamic = defined by filters on a type.
+        # Static = defined by a list of PKs.
+
+        is_dynamic = bool(object_set._query_filters)
+        
+        definition = ObjectSetDefinition(
+            id=rid,
+            type=persistence_type,  # This tracks lifecycle, but we also need to track definition type (Static/Dynamic)
+            # Let's use the 'type' field for lifecycle as per prompt (Temporary/Permanent) 
+            # but we need to know how to load it.
+            # Actually prompt says: "Object sets can be described by definition (static or dynamic) AND current state (temporary or permanent)"
+            # So maybe we need two fields or infer from content.
+            # Let's infer: if filters is present -> Dynamic, else -> Static.
+            object_type_api_name=object_set.object_type.api_name,
+            created_at=time.time(),
+        )
+
+        if is_dynamic:
+            definition.filters = object_set._query_filters
+        else:
+            # Static snapshot
+            definition.static_pks = [obj.primary_key_value for obj in object_set.all()]
+
+        if persistence_type == "TEMPORARY":
+            definition.expiration_time = time.time() + 24 * 3600  # 24 hours
+
+        self._store[rid] = definition
+        return rid
+
+    def load_object_set(self, rid: str) -> "ObjectSet":
+        definition = self._store.get(rid)
+        if not definition:
+            raise ValueError(f"ObjectSet {rid} not found")
+
+        if (
+            definition.expiration_time
+            and time.time() > definition.expiration_time
+        ):
+             # Clean up expired
+            del self._store[rid]
+            raise ValueError(f"ObjectSet {rid} has expired")
+
+        object_type = self._ontology.get_object_type(definition.object_type_api_name)
+        if not object_type:
+             raise ValueError(f"ObjectType {definition.object_type_api_name} not found")
+
+        if definition.filters is not None:
+            # Dynamic
+            return ObjectSet(
+                object_type,
+                ontology=self._ontology,
+                filters=definition.filters,
+                lazy=True
+            )
+        else:
+            # Static
+            # We need to fetch objects by PKs
+            # This requires a batch fetch capability or loop
+            objects = []
+            for pk in definition.static_pks or []:
+                obj = self._ontology.get_object(definition.object_type_api_name, pk)
+                if obj:
+                    objects.append(obj)
+            return ObjectSet(object_type, objects, self._ontology)
+
+    def _generate_rid(self, persistence_type: str) -> str:
+        # ri.object-set.main.temporary-object-set.uuid
+        # ri.object-set.main.object-set.uuid (for permanent?)
+        
+        prefix = "temporary-object-set" if persistence_type == "TEMPORARY" else "object-set"
+        return f"ri.object-set.main.{prefix}.{uuid.uuid4()}"
 
 
 class ObjectSet:
@@ -443,7 +558,6 @@ class ObjectSet:
                 self.object_type.api_name, self._query_filters, self._lazy_limit
             )
             self._lazy = False
-            self._query_filters = {}
             self._lazy_limit = None
         return self._objects
 
@@ -718,6 +832,7 @@ class Ontology:
             self._object_store, adapter_id=self._default_datasource_id
         )
         self.register_datasource(self._memory_datasource)
+        self.object_set_service = ObjectSetService(self)
 
     def register_datasource(self, adapter: DataSourceAdapter):
         self._datasources[adapter.id] = adapter
@@ -800,7 +915,13 @@ class Ontology:
             return
         self._ensure_writable(obj_type)
         datasource = self._get_datasource_for_type(obj_type)
-        datasource.delete(obj_type, primary_key)
+        datasource.delete_object(obj_type, primary_key)
+
+    def object_set(self, object_type_api_name: str) -> "ObjectSet":
+        obj_type = self.get_object_type(object_type_api_name)
+        if not obj_type:
+            raise ValueError(f"Unknown object type: {object_type_api_name}")
+        return ObjectSet(obj_type, ontology=self, lazy=True)
 
     def scan_objects(
         self,

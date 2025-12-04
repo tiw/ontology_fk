@@ -1,4 +1,10 @@
 import time
+import sys
+import os
+
+# Add src and project root to sys.path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../src')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 from ontology_framework.core import Ontology, ActionContext
 from example.order_delivery.schema import setup_ontology
 
@@ -152,7 +158,7 @@ def main():
     # Let's create an ObjectSet of Orders
     from ontology_framework.core import ObjectSet
     
-    all_orders = ObjectSet(ontology.get_object_type("Order"), ontology.get_objects_of_type("Order"), ontology)
+    all_orders = ontology.object_set("Order")
     print(f"Total Orders: {len(all_orders.all())}")
     
     # Filter Orders with negative TGAP (Late orders)
@@ -162,6 +168,18 @@ def main():
     late_orders = [o for o in all_orders.all() if o.get("t_gap_min") is not None and o.get("t_gap_min") < 0]
     print(f"Late Orders: {len(late_orders)}")
     
+    # Save Late Orders to OSS
+    if late_orders:
+        print("\n--- Saving Late Orders to OSS ---")
+        late_orders_set = ObjectSet(ontology.get_object_type("Order"), late_orders, ontology)
+        oss = ontology.object_set_service
+        saved_rid = oss.save_object_set(late_orders_set, persistence_type="TEMPORARY")
+        print(f"Saved Late Orders Set: {saved_rid}")
+        
+        # Reload and Verify
+        loaded_set = oss.load_object_set(saved_rid)
+        print(f"Loaded Set Count: {len(loaded_set.all())}")
+
     # For a late order, find the Merchant
     if late_orders:
         late_order = late_orders[0]

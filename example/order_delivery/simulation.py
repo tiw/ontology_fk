@@ -1,5 +1,11 @@
 import random
 import time
+import sys
+import os
+
+# Add src and project root to sys.path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../src')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 from ontology_framework.core import Ontology, ActionContext, ObjectInstance
 from example.order_delivery.schema import setup_ontology
 
@@ -70,7 +76,7 @@ def simulate_orders(n=1000):
     print("Simulation complete. Analyzing...")
     
     # Analysis
-    all_orders = ontology.get_objects_of_type("Order")
+    all_orders = ontology.object_set("Order").all()
     
     results = []
     for order in all_orders:
@@ -121,6 +127,16 @@ def simulate_orders(n=1000):
             groups["Late (TGAP < 0)"].append(r)
             if r['t_gap'] < -10:
                 groups["Very Late (TGAP < -10)"].append(r)
+
+    # Save Very Late Orders to OSS
+    from ontology_framework.core import ObjectSet
+    very_late_orders = [ontology.get_object("Order", r['id']) for r in groups["Very Late (TGAP < -10)"]]
+    if very_late_orders:
+        print(f"\nSaving {len(very_late_orders)} Very Late Orders to OSS...")
+        late_set = ObjectSet(ontology.get_object_type("Order"), very_late_orders, ontology)
+        oss = ontology.object_set_service
+        rid = oss.save_object_set(late_set, persistence_type="PERMANENT")
+        print(f"Saved Very Late Orders Set: {rid}")
                 
     # Print Stats
     print(f"\n{'Group':<25} | {'Count':<5} | {'Avg TGAP':<8} | {'Resp':<5} | {'Prep':<5} | {'Arrive':<6} | {'WaitGoods':<9} | {'WaitRider':<9} | {'Deliver':<7}")
